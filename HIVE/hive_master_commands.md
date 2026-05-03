@@ -1,792 +1,448 @@
-# HIVE MASTER COMMANDS HANDBOOK (Beginner → Advanced → Admin → Exam Level)
-
-This document contains structured Hive commands useful for CDAC / DBDA / Big Data interviews / Hadoop ecosystem practice.
+Samajh gaya 👍
 
 ---
 
-## SECTION 1: STARTING HIVE ENVIRONMENT
+# 📁 HIVE ADVANCED COMMANDS — PART 2 (ENGINEER LEVEL)
 
-# Start Hive shell
+## SECTION 131 — QUERY EXECUTION ENGINE SWITCHING
 
-hive
+```sql
+# Check current execution engine
+set hive.execution.engine;
 
-# Start Beeline shell
+# Switch to MapReduce engine
+set hive.execution.engine=mr;
 
-beeline
+# Switch to Tez engine
+set hive.execution.engine=tez;
 
-# Connect Beeline to HiveServer2
+# Switch to Spark engine
+set hive.execution.engine=spark;
+```
 
-beeline -u jdbc:hive2://localhost:10000
-
----
-
-## SECTION 2: DATABASE COMMANDS
-
-# Show all databases
-
-show databases;
-
-# Create database
-
-create database company;
-
-# Create database if not exists
-
-create database if not exists company;
-
-# Use database
-
-use company;
-
-# Show current database
-
-set hive.current.database;
-
-# Describe database
-
-describe database company;
-
-# Describe database extended info
-
-describe database extended company;
-
-# Drop database
-
-drop database company;
-
-# Drop database with contents
-
-drop database company cascade;
+⭐ Exam trap: Default modern clusters → **tez**
 
 ---
 
-## SECTION 3: TABLE CREATION COMMANDS
+# SECTION 132 — CHECK QUERY STAGE BREAKDOWN
 
-# Create table
+```sql
+# View stage-level execution
+explain select * from employee;
 
-create table employee(
-id int,
-name string,
-salary float
-);
+# Extended execution pipeline
+explain extended select * from employee;
+```
 
-# Show tables
-
-show tables;
-
-# Describe table
-
-describe employee;
-
-# Describe formatted table
-
-describe formatted employee;
-
-# Describe extended table
-
-describe extended employee;
+Used to identify Mapper + Reducer stages ⚙️
 
 ---
 
-## SECTION 4: INTERNAL vs EXTERNAL TABLES
+# SECTION 133 — FORCE NUMBER OF REDUCERS
 
-# Create internal table
+```sql
+# Manually define reducers
+set mapreduce.job.reduces=5;
+```
 
-create table emp_internal(
-id int,
-name string
-);
-
-# Create external table
-
-create external table emp_external(
-id int,
-name string
-)
-row format delimited
-fields terminated by ','
-location '/hive/external/emp';
-
-# Drop external table (data remains safe)
-
-drop table emp_external;
+Useful when skewed dataset present
 
 ---
 
-## SECTION 5: LOAD DATA COMMANDS
+# SECTION 134 — AUTO REDUCER CALCULATION FORMULA
 
-# Load local data
+```sql
+# Control reducer auto calculation threshold
+set hive.exec.reducers.bytes.per.reducer=256000000;
+```
 
-load data local inpath '/home/data.txt'
-into table employee;
-
-# Load HDFS data
-
-load data inpath '/input/data.txt'
-into table employee;
-
-# Overwrite table data
-
-load data local inpath '/home/data.txt'
-overwrite into table employee;
+Default ≈ 256MB per reducer
 
 ---
 
-## SECTION 6: SELECT QUERY COMMANDS
+# SECTION 135 — MAXIMUM REDUCER LIMIT CONTROL
 
-# Select all records
+```sql
+# Limit total reducers allowed
+set hive.exec.reducers.max=64;
+```
 
-select * from employee;
-
-# Select specific columns
-
-select name from employee;
-
-# Select with condition
-
-select * from employee where salary > 50000;
-
-# Limit output
-
-select * from employee limit 10;
+Prevents cluster overload 🚀
 
 ---
 
-## SECTION 7: FILTERING COMMANDS
+# SECTION 136 — ENABLE FETCH TASK OPTIMIZATION
 
-# AND condition
+```sql
+# Convert simple queries to fetch-only execution
+set hive.fetch.task.conversion=more;
+```
 
-select * from employee where salary > 30000 and id < 10;
-
-# OR condition
-
-select * from employee where salary > 30000 or id < 10;
-
-# NOT condition
-
-select * from employee where not salary > 30000;
+Avoids MapReduce job execution
 
 ---
 
-## SECTION 8: SORTING COMMANDS
+# SECTION 137 — ENABLE SMALL FILE MERGE (MAP OUTPUT)
 
-# Order by ascending
+```sql
+# Merge mapper output files
+set hive.merge.mapfiles=true;
+```
 
-select * from employee order by salary;
-
-# Order by descending
-
-select * from employee order by salary desc;
-
-# Sort within reducer
-
-select * from employee sort by salary;
-
-# Distribute rows
-
-select * from employee distribute by id;
-
-# Cluster data
-
-select * from employee cluster by id;
+Solves small file problem 📂
 
 ---
 
-## SECTION 9: GROUP BY COMMANDS
+# SECTION 138 — ENABLE SMALL FILE MERGE (REDUCER OUTPUT)
 
-# Count employees per department
-
-select dept, count(*)
-from employee
-group by dept;
-
-# Sum salary
-
-select dept, sum(salary)
-from employee
-group by dept;
+```sql
+# Merge reducer output files
+set hive.merge.mapredfiles=true;
+```
 
 ---
 
-## SECTION 10: JOIN COMMANDS
+# SECTION 139 — CONTROL MERGE FILE SIZE
 
-# Inner join
-
-select a.id, b.dept
-from emp a
-join dept b
-on a.id = b.id;
-
-# Left join
-
-select a.id, b.dept
-from emp a
-left join dept b
-on a.id = b.id;
-
-# Right join
-
-select a.id, b.dept
-from emp a
-right join dept b
-on a.id = b.id;
-
-# Full outer join
-
-select a.id, b.dept
-from emp a
-full outer join dept b
-on a.id = b.id;
+```sql
+# Target merged file size
+set hive.merge.size.per.task=256000000;
+```
 
 ---
 
-## SECTION 11: PARTITION TABLE COMMANDS
+# SECTION 140 — ENABLE AUTO MAPJOIN THRESHOLD
 
-# Create partition table
-
-create table sales(
-id int,
-amount int
-)
-partitioned by (year int);
-
-# Load partition data
-
-load data local inpath '/sales.txt'
-into table sales partition(year=2024);
-
-# Show partitions
-
-show partitions sales;
-
----
-
-## SECTION 12: BUCKETING COMMANDS
-
-# Create bucket table
-
-create table student(
-id int,
-name string
-)
-clustered by(id)
-into 4 buckets;
-
----
-
-## SECTION 13: VIEW COMMANDS
-
-# Create view
-
-create view emp_view as
-select * from employee;
-
-# Show views
-
-show tables;
-
-# Drop view
-
-drop view emp_view;
-
----
-
-## SECTION 14: INDEX COMMANDS
-
-# Create index
-
-create index emp_index
-on table employee(name)
-as 'compact'
-with deferred rebuild;
-
-# Rebuild index
-
-alter index emp_index
-on employee rebuild;
-
----
-
-## SECTION 15: ALTER TABLE COMMANDS
-
-# Rename table
-
-alter table employee rename to emp;
-
-# Add column
-
-alter table emp add columns(age int);
-
-# Replace columns
-
-alter table emp replace columns(
-id int,
-name string
-);
-
----
-
-## SECTION 16: DROP TABLE COMMANDS
-
-# Drop table
-
-drop table emp;
-
-# Drop if exists
-
-drop table if exists emp;
-
----
-
-## SECTION 17: SHOW COMMANDS
-
-# Show databases
-
-show databases;
-
-# Show tables
-
-show tables;
-
-# Show partitions
-
-show partitions sales;
-
-# Show table properties
-
-show tblproperties employee;
-
----
-
-## SECTION 18: DESCRIBE COMMANDS
-
-# Describe table
-
-describe employee;
-
-# Describe formatted
-
-describe formatted employee;
-
-# Describe extended
-
-describe extended employee;
-
----
-
-## SECTION 19: FILE FORMAT COMMANDS
-
-# Create ORC table
-
-create table orc_table(
-id int,
-name string
-)
-stored as orc;
-
-# Create PARQUET table
-
-create table pq_table(
-id int,
-name string
-)
-stored as parquet;
-
-# Create TEXTFILE table
-
-create table txt_table(
-id int,
-name string
-)
-stored as textfile;
-
----
-
-## SECTION 20: PERFORMANCE TUNING COMMANDS
-
-# Enable vectorization
-
-set hive.vectorized.execution.enabled=true;
-
-# Enable parallel execution
-
-set hive.exec.parallel=true;
-
-# Set reducer count
-
-set mapreduce.job.reduces=4;
-
-# Enable compression
-
-set hive.exec.compress.output=true;
-
----
-
-## SECTION 21: SERDE COMMANDS (VERY IMPORTANT FOR EXAMS)
-
-# Create table using custom SerDe
-
-create table serde_table(
-id int,
-name string
-)
-row format serde 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe';
-
-# Show SerDe information
-
-describe formatted serde_table;
-
----
-
-## SECTION 22: ROW FORMAT & DELIMITERS
-
-# Create CSV formatted table
-
-create table csv_table(
-id int,
-name string
-)
-row format delimited
-fields terminated by ',';
-
-# Tab separated table
-
-create table tsv_table(
-id int,
-name string
-)
-row format delimited
-fields terminated by '	';
-
----
-
-## SECTION 23: DYNAMIC PARTITIONING COMMANDS
-
-# Enable dynamic partitioning
-
-set hive.exec.dynamic.partition=true;
-
-# Enable non-strict dynamic partitioning
-
-set hive.exec.dynamic.partition.mode=nonstrict;
-
-# Insert into dynamic partition table
-
-insert into table sales partition(year)
-select id, amount, year from sales_temp;
-
----
-
-## SECTION 24: STATIC PARTITIONING COMMANDS
-
-# Insert static partition data
-
-insert into table sales partition(year=2024)
-select id, amount from sales_temp;
-
----
-
-## SECTION 25: MULTI INSERT COMMANDS
-
-# Insert into multiple tables simultaneously
-
-from employee
-insert overwrite table emp_high
-select * where salary > 50000
-insert overwrite table emp_low
-select * where salary <= 50000;
-
----
-
-## SECTION 26: OVERWRITE vs APPEND INSERT
-
-# Overwrite table data
-
-insert overwrite table employee
-select * from emp_temp;
-
-# Append data
-
-insert into table employee
-select * from emp_temp;
-
----
-
-## SECTION 27: CREATE TABLE AS SELECT (CTAS)
-
-# Create table from query
-
-create table emp_copy as
-select * from employee;
-
----
-
-## SECTION 28: TEMPORARY TABLE COMMANDS
-
-# Create temporary table
-
-create temporary table temp_emp(
-id int,
-name string
-);
-
-# Temporary tables exist only in session
-
-select * from temp_emp;
-
----
-
-## SECTION 29: EXTERNAL LOCATION MANAGEMENT
-
-# Change external table location
-
-alter table emp_external
-set location '/new/location';
-
----
-
-## SECTION 30: TABLE PROPERTIES COMMANDS
-
-# Add table property
-
-alter table employee
-set tblproperties('creator'='admin');
-
-# Show table properties
-
-show tblproperties employee;
-
----
-
-## SECTION 31: HIVE VARIABLES COMMANDS
-
-# Set Hive variable
-
-set hivevar:threshold=100;
-
-# Use Hive variable
-
-select * from employee where salary > ${hivevar:threshold};
-
----
-
-## SECTION 32: MAPJOIN COMMANDS (PERFORMANCE OPTIMIZATION)
-
-# Enable automatic map join
-
+```sql
+# Auto convert join to MapJoin
 set hive.auto.convert.join=true;
+```
 
-# Force map join
+---
 
+# SECTION 141 — MAPJOIN MEMORY LIMIT
+
+```sql
+# Define small table threshold
+set hive.auto.convert.join.noconditionaltask.size=10000000;
+```
+
+Default ≈ 10MB
+
+---
+
+# SECTION 142 — FORCE MAPJOIN MANUALLY
+
+```sql
 select /*+ MAPJOIN(dept) */ *
 from emp join dept
 on emp.id=dept.id;
+```
+
+Small table broadcast join
 
 ---
 
-## SECTION 33: SKEW JOIN HANDLING
+# SECTION 143 — ENABLE BUCKET MAP JOIN
 
-# Enable skew join optimization
-
-set hive.optimize.skewjoin=true;
-
----
-
-## SECTION 34: BUCKET MAP JOIN
-
-# Enable bucket map join
-
+```sql
+# Enable bucket join optimization
 set hive.optimize.bucketmapjoin=true;
+```
 
 ---
 
-## SECTION 35: SORT MERGE BUCKET JOIN
+# SECTION 144 — ENABLE SORT MERGE BUCKET JOIN
 
-# Enable SMB join
-
+```sql
+# Enable SMB join optimization
 set hive.optimize.bucketmapjoin.sortedmerge=true;
+```
+
+Used in large distributed joins
 
 ---
 
-## SECTION 36: EXPLAIN PLAN COMMANDS
+# SECTION 145 — ENABLE SKEW JOIN OPTIMIZATION
 
-# Show execution plan
+```sql
+# Enable skew join handling
+set hive.optimize.skewjoin=true;
+```
 
-explain select * from employee;
-
-# Extended execution plan
-
-explain extended
-select * from employee;
+Handles uneven key distribution
 
 ---
 
-## SECTION 37: ANALYZE TABLE COMMANDS
+# SECTION 146 — ENABLE PARTITION PRUNING
 
+```sql
+# Skip unnecessary partitions
+set hive.optimize.ppd=true;
+```
+
+Improves scan speed ⚡
+
+---
+
+# SECTION 147 — ENABLE COLUMN PRUNING
+
+```sql
+# Enable column pruning
+set hive.optimize.cp=true;
+```
+
+Reads only required columns
+
+---
+
+# SECTION 148 — ENABLE COST BASED OPTIMIZER
+
+```sql
+# Enable cost-based optimizer
+set hive.cbo.enable=true;
+```
+
+Optimizes join order automatically
+
+---
+
+# SECTION 149 — ENABLE STATISTICS FOR CBO
+
+```sql
 # Collect table statistics
-
 analyze table employee compute statistics;
 
 # Collect column statistics
+analyze table employee compute statistics for columns;
+```
 
-analyze table employee
-compute statistics for columns;
-
----
-
-## SECTION 38: CACHE METADATA COMMANDS
-
-# Refresh metadata
-
-msck repair table sales;
+Required for CBO accuracy
 
 ---
 
-## SECTION 39: ADD FILE / JAR COMMANDS
+# SECTION 150 — ENABLE VECTORIZED EXECUTION
 
-# Add external jar
+```sql
+# Enable vectorized processing
+set hive.vectorized.execution.enabled=true;
+```
 
-add jar /home/hadoop/udf.jar;
-
-# Add file
-
-add file script.py;
-
----
-
-## SECTION 40: USER DEFINED FUNCTION (UDF)
-
-# Create temporary UDF
-
-create temporary function myfunc
-as 'com.example.MyUDF';
-
-# Use UDF
-
-select myfunc(name) from employee;
+Processes batch column data faster 🚀
 
 ---
 
-## SECTION 41: PERMANENT FUNCTION COMMANDS
+# SECTION 151 — ENABLE ORC OPTIMIZATION
 
-# Create permanent function
+```sql
+# Enable predicate pushdown
+set hive.optimize.ppd=true;
 
-create function permfunc
-as 'com.example.MyUDF';
-
-# Drop function
-
-drop function permfunc;
-
----
-
-## SECTION 42: LATERAL VIEW COMMANDS
-
-# Use explode function
-
-select id, val
-from employee
-lateral view explode(array_col) t as val;
+# Enable ORC indexing
+set hive.optimize.index.filter=true;
+```
 
 ---
 
-## SECTION 43: WINDOW FUNCTION COMMANDS
+# SECTION 152 — ENABLE PARQUET OPTIMIZATION
 
-# Row number function
-
-select id,
-row_number() over(order by salary)
-from employee;
-
-# Rank function
-
-select id,
-rank() over(order by salary)
-from employee;
+```sql
+# Enable parquet predicate pushdown
+set hive.optimize.index.filter=true;
+```
 
 ---
 
-## SECTION 44: UNION COMMANDS
+# SECTION 153 — ENABLE LOCAL MODE EXECUTION
 
-# Union datasets
-
-select * from emp1
-union all
-select * from emp2;
-
----
-
-## SECTION 45: CASE STATEMENT COMMANDS
-
-# Conditional query
-
-select name,
-case
-when salary > 50000 then 'HIGH'
-else 'LOW'
-end
-from employee;
+```sql
+# Run small queries locally
+set hive.exec.mode.local.auto=true;
+```
 
 ---
 
-## SECTION 46: HIVE EXECUTION ENGINE SETTINGS (EXAM TRAPS)
+# SECTION 154 — ENABLE PARALLEL QUERY EXECUTION
 
-# Use MapReduce engine
+```sql
+# Enable parallel execution
+set hive.exec.parallel=true;
+```
 
-set hive.execution.engine=mr;
-
-# Use Tez engine
-
-set hive.execution.engine=tez;
-
-# Use Spark engine
-
-set hive.execution.engine=spark;
+Runs independent stages simultaneously
 
 ---
 
-## SECTION 47: LOGGING SETTINGS (VERY COMMON EXAM QUESTION)
+# SECTION 155 — CONTROL SCRATCH DIRECTORY
 
-# Hive logging framework
+```sql
+# Show temp execution directory
+set hive.exec.scratchdir;
+```
 
-log4j
-
----
-
-## SECTION 48: SHOW FUNCTIONS COMMANDS
-
-# Show all functions
-
-show functions;
-
-# Describe function
-
-describe function upper;
-
-# Extended function description
-
-describe function extended upper;
+Stores intermediate results
 
 ---
 
-## SECTION 49: SET COMMANDS (CONFIGURATION INSPECTION)
+# SECTION 156 — CHECK WAREHOUSE DIRECTORY
 
-# Show all configuration properties
+```sql
+# Show warehouse path
+set hive.metastore.warehouse.dir;
+```
 
+Default:
+
+```
+/user/hive/warehouse
+```
+
+⭐ Exam favorite
+
+---
+
+# SECTION 157 — CHECK DEFAULT FILE FORMAT
+
+```sql
+# Show default storage format
+set hive.default.fileformat;
+```
+
+Usually:
+
+```
+TEXTFILE
+```
+
+---
+
+# SECTION 158 — ENABLE RESULT CACHE
+
+```sql
+# Enable query result caching
+set hive.query.results.cache.enabled=true;
+```
+
+Speeds repeated queries
+
+---
+
+# SECTION 159 — ENABLE AUTHORIZATION SECURITY
+
+```sql
+# Enable SQL authorization
+set hive.security.authorization.enabled=true;
+```
+
+---
+
+# SECTION 160 — CHECK SESSION VARIABLES
+
+```sql
+# Show session variables
 set;
+```
 
-# Show specific property
-
-set hive.exec.parallel;
+Lists entire Hive config snapshot 📊
 
 ---
 
-## SECTION 50: HIVE SESSION SETTINGS
+# SECTION 161 — ENABLE STRICT MODE VALIDATION
 
-# Enable strict mode
+```sql
+# Prevent cartesian joins
+set hive.strict.checks.cartesian.product=true;
+```
 
-set hive.mapred.mode=strict;
+---
 
-# Disable strict mode
+# SECTION 162 — ENABLE DYNAMIC PARTITIONING
 
-set hive.mapred.mode=nonstrict;
+```sql
+set hive.exec.dynamic.partition=true;
+```
+
+---
+
+# SECTION 163 — SWITCH TO NON-STRICT MODE
+
+```sql
+set hive.exec.dynamic.partition.mode=nonstrict;
+```
+
+Default = strict ⭐
+
+---
+
+# SECTION 164 — CHECK HDFS REPLICATION FACTOR FROM HIVE
+
+```sql
+set dfs.replication;
+```
+
+Default:
+
+```
+3
+```
+
+---
+
+# SECTION 165 — CHECK TEMP FILE LOCATION
+
+```sql
+set hive.exec.local.scratchdir;
+```
+
+---
+
+# SECTION 166 — CHECK LOGGING FRAMEWORK
+
+```
+log4j
+```
+
+⭐ Direct MCQ question
+
+---
+
+# SECTION 167 — CHECK EXECUTION MODE
+
+```sql
+set hive.mapred.mode;
+```
+
+Values:
+
+```
+strict
+nonstrict
+```
+
+---
+
+# SECTION 168 — CHECK AUTO PARALLEL REDUCERS
+
+```sql
+set hive.exec.reducers.max;
+```
+
+---
+
+# SECTION 169 — CHECK FETCH MODE SETTING
+
+```sql
+set hive.fetch.task.conversion;
+```
+
+---
+
+# SECTION 170 — CHECK CURRENT DATABASE
+
+```sql
+set hive.current.database;
+```
+
+---
+
+Agar tum chaho to next **Hive Super-Advanced Admin Part-3 (Metastore tuning + Tez configs + memory tuning + YARN integration + query failure debugging)** bhi bana deta hoon 🔧📊
