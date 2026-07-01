@@ -134,25 +134,7 @@ FROM employees;
 
 ---
 
-## 5. Hive Performance Optimization Techniques
-
-* **Tez Execution Engine**:
-  * Set `set hive.execution.engine=tez;`. Tez executes jobs using a directed acyclic graph (DAG) and passes data in-memory between tasks, avoiding writing intermediate data to HDFS like legacy MapReduce.
-* **Vectorization**:
-  * Set `set hive.vectorized.execution.enabled=true;` and `set hive.vectorized.execution.reduce.enabled=true;`. Vectorization allows the execution engine to process a batch of 1024 rows together instead of single rows. This improves CPU cache utilization and reduces instruction pipelines.
-* **Cost-Based Optimizer (CBO)**:
-  * Uses database statistics (row count, histograms) to optimize queries (e.g., reordering joins, choosing physical algorithms).
-  * Run stats calculation:
-    ```sql
-    ANALYZE TABLE orders_optimized PARTITION(year, month) COMPUTE STATISTICS;
-    ```
-* **Join Optimizations**:
-  * **Map Join**: If joining a large table and a small table (default threshold: `<25MB` defined by `hive.auto.convert.join.noconditionaltask.size`), the small table is loaded into memory (DistributedCache) on all map nodes. The join is executed entirely inside the map phase without a shuffle stage.
-  * **SMB (Sort Merge Bucket) Join**: If both tables are bucketed on the same join key, sorted, and have matching/compatible bucket counts, Hive performs a Sorted Merge Bucket Join. It reads buckets sequentially and merges them, bypassing sorting and shuffling completely.
-
----
-
-## 6. ACID & Transactional Tables (v2.x/3.x)
+## 5. ACID & Transactional Tables (v2.x/3.x)
 
 Modern Hive supports ACID (Atomicity, Consistency, Isolation, Durability) transactions over HDFS using write-ahead Delta files and transaction managers.
 
@@ -181,41 +163,159 @@ Modern Hive supports ACID (Atomicity, Consistency, Isolation, Durability) transa
 </property>
 ```
 
-### DDL and Operation:
-```sql
-CREATE TABLE customer_accounts (
-    account_id INT,
-    balance DOUBLE
-)
-CLUSTERED BY (account_id) INTO 4 BUCKETS
-STORED AS ORC
-TBLPROPERTIES ('transactional'='true');
+---
 
--- Supports standard transactional queries
-INSERT INTO customer_accounts VALUES (101, 5000.0);
-UPDATE customer_accounts SET balance = 5500.0 WHERE account_id = 101;
-DELETE FROM customer_accounts WHERE account_id = 101;
+## 6. Complete Hive SQL & CLI Reference Library
+
+This section covers the exhaustive DDL/DML queries and performance variables.
+
+### A. Data Definition Language (DDL)
+* **`CREATE TABLE`**:
+  ```sql
+  -- Managed Table with ORC Format
+  CREATE TABLE customers (id INT, name STRING) STORED AS ORC;
+  
+  -- Partitioned External Table
+  CREATE EXTERNAL TABLE logs (ip STRING, status INT) 
+  PARTITIONED BY (dt STRING) 
+  STORED AS PARQUET 
+  LOCATION '/data/logs/';
+  ```
+* **`ALTER TABLE`**:
+  ```sql
+  -- Add a partition manually
+  ALTER TABLE logs ADD PARTITION (dt='2026-07-01');
+  
+  -- Change partition location path
+  ALTER TABLE logs PARTITION (dt='2026-07-01') SET LOCATION '/data/new_logs/2026-07-01';
+  
+  -- Replace columns schema definition
+  ALTER TABLE customers REPLACE COLUMNS (id INT, full_name STRING, country STRING);
+  ```
+* **`DESCRIBE`**:
+  ```sql
+  DESCRIBE customers;            -- Simple schema view
+  DESCRIBE FORMATTED customers;  -- Exhaustive metadata view (type, location, statistics, compression properties)
+  ```
+
+### B. Data Manipulation Language (DML)
+* **`LOAD DATA`**:
+  ```sql
+  -- Load a local file to HDFS Hive warehouse (moves local file)
+  LOAD DATA INPATH '/tmp/local_data.csv' INTO TABLE customers;
+  
+  -- Load file directly into a specific partition
+  LOAD DATA INPATH '/tmp/logs.txt' INTO TABLE logs PARTITION (dt='2026-07-01');
+  ```
+* **`INSERT`**:
+  ```sql
+  -- Appends data
+  INSERT INTO TABLE customers SELECT id, name FROM temp_table;
+  
+  -- Overwrites entire table/partition
+  INSERT OVERWRITE TABLE logs PARTITION(dt='2026-07-01') SELECT ip, status FROM source_table;
+  
+  -- Write query output directly to HDFS directory as text files
+  INSERT OVERWRITE DIRECTORY '/tmp/output_data' 
+  ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' 
+  SELECT * FROM customers;
+  ```
+
+### C. Metastore Synchronization & Repairs
+* **`MSCK REPAIR TABLE`**: Syncs HDFS partition directories with the metastore.
+  ```sql
+  MSCK REPAIR TABLE logs;
+  ```
+
+### D. ACID Compaction Commands
+* **`COMPACT`**: Merge delta folders.
+  ```sql
+  ALTER TABLE customer_accounts COMPACT 'major'; -- Complete merge of base and delta files
+  ALTER TABLE customer_accounts COMPACT 'minor'; -- Merge delta files into one delta file
+  ```
+* **`SHOW`**:
+  ```sql
+  SHOW COMPACTIONS;  -- Inspect compaction status (INITIATED, RUNNING, READY, FAILED)
+  SHOW TRANSACTIONS;  -- Inspect active locks and transactional IDs
+  ```
+
+### E. Hive Performance Optimization Parameters
+```sql
+-- Switch execution engine from MapReduce to Tez
+set hive.execution.engine=tez;
+
+-- Enable CPU optimization via Vectorization
+set hive.vectorized.execution.enabled=true;
+set hive.vectorized.execution.reduce.enabled=true;
+
+-- Enable Cost-Based Optimizer (CBO)
+set hive.cbo.enable=true;
+
+-- Enable automatic conversion of joins to Map Joins
+set hive.auto.convert.join=true;
+set hive.auto.convert.join.noconditionaltask.size=26214400; -- 25 MB in bytes
+
+-- Enable Sort-Merge Bucket (SMB) joins
+set hive.optimize.bucketmapjoin=true;
+set hive.optimize.bucketmapjoin.sortedmerge=true;
+
+-- Enable dynamic partitioning inserts
+set hive.exec.dynamic.partition=true;
+set hive.exec.dynamic.partition.mode=nonstrict; -- Allows inserting without specifying any static partition
 ```
 
 ---
 
-## 🎯 Exam and Interview Traps
+## 7. Enterprise Job Interview Q&A (Apache Hive)
 
-1. **Trap: Why does a query with a `WHERE` condition on a partitioned column run extremely slowly on a newly loaded table?**
-   * **Answer**: If the partition data was copied directly to HDFS (e.g., using `hdfs dfs -put`), Hive's metastore is unaware of the new directory paths. Hive will scan the entire root table directory. Run the metastore repair command to sync HDFS partition paths with the Metastore:
-     ```sql
-     MSCK REPAIR TABLE table_name;
-     ```
+This section prepares you for production-level interview questions.
 
-2. **Trap: What is the difference between Partitioning and Bucketing, and how do you choose?**
-   * **Answer**: Partitioning is logical directory splitting; it should be used on low-cardinality columns (e.g., Date, Region, Department) where you filter queries directly. Bucketing is hash-based file splitting; it should be used on high-cardinality columns (e.g., UserID, TransactionID) to prevent folder bloat, optimize join algorithms, and enforce file size caps.
+### Q1: What is the `MSCK REPAIR TABLE` command, and why is it necessary? What occurs under the hood?
+* **How to explain this to the interviewer**:
+  Explain that Hive has a separation of concerns: data resides in HDFS, but schemas/directories reside in the Metastore database (RDBMS). Explain that copying files bypasses the Metastore, and MSCK repairs this link.
 
-3. **Trap: Why are there thousands of tiny files in my ACID transactional table directories, and how do we resolve this?**
-   * **Answer**: Every `INSERT`, `UPDATE`, or `DELETE` statement in Hive ACID writes a new `delta` directory in HDFS containing small incremental files. To resolve this, Hive running compactors must merge these files. Check transaction compaction status:
-     ```sql
-     SHOW COMPACTIONS;
-     ```
-     If stalled, trigger manual compaction:
-     ```sql
-     ALTER TABLE customer_accounts COMPACT 'major';
-     ```
+* **Model Answer**:
+  "The `MSCK REPAIR TABLE` (Metastore Check Table) command synchronizes the Hive Metastore metadata with the actual directories present in HDFS.
+  
+  When an external tool (like a Spark job or an HDFS CLI command) creates a new partition directory in HDFS (e.g., `/user/hive/warehouse/logs/dt=2026-07-02/`) and uploads files, the Hive Metastore database remains completely unaware of this folder. Consequently, running `SELECT * FROM logs WHERE dt='2026-07-02'` will return zero records.
+  
+  When `MSCK REPAIR TABLE logs` is executed:
+  1. Hive queries the NameNode for the directory structure under the table's location.
+  2. It parses the directory names looking for partition keys (e.g., `dt=value`).
+  3. It compares these HDFS directories against the partition records in the Metastore RDBMS.
+  4. It registers any missing partition directories into the Metastore, making the data queryable immediately."
+
+---
+
+### Q2: Compare Partitioning vs. Bucketing. What are the performance hazards of over-partitioning, and how does bucketing optimize joins?
+* **How to explain this to the interviewer**:
+  Define both clearly, contrast them, and focus on the NameNode memory bloat caused by over-partitioning. Then show how bucketing enables the Sort-Merge Bucket (SMB) Join.
+
+* **Model Answer**:
+  "**Partitioning** is the division of data into physical subdirectories based on specific columns (e.g., Date or Region). It is designed to speed up queries via partition pruning. **Bucketing** is the division of files *within* directories based on a hash of a column (e.g., UserID) modulo a fixed number of buckets.
+  
+  **Over-Partitioning Hazard**:
+  If a table is partitioned on a high-cardinality column like `timestamp`, Hive will create a separate HDFS directory for every unique second. This causes:
+  1. Severe NameNode memory bloat, as each directory and file takes ~150 bytes in NameNode JVM heap.
+  2. High MapReduce/Spark overhead, as each small file spawns a separate task, wasting cluster resource scheduling time.
+  
+  **Bucketing Join Optimization**:
+  If we join two tables bucketed on the same join key (e.g., `user_id`) with compatible bucket counts (e.g. 16 and 32), Hive can perform a **Bucket Map Join** or a **Sorted Merge Bucket (SMB) Join**. Instead of shuffling both tables across the network, the engine loads corresponding bucket files into memory (Bucket 1 of Table A joined to Bucket 1 of Table B) and performs a local merge-join, completely bypassing the network shuffle."
+
+---
+
+### Q3: Explain how ACID Transactions are implemented in Apache Hive on top of HDFS, which is append-only.
+* **How to explain this to the interviewer**:
+  Explain how Hive achieves updates and deletes on HDFS by writing delta directories (using transaction IDs) instead of updating files in place, and explain the compaction daemon's role in merging these delta files.
+
+* **Model Answer**:
+  "Since HDFS is an append-only file system, Hive cannot modify blocks in place. Instead, Hive achieves ACID functionality through **Write-Ahead Delta Files**.
+  
+  1. **Insert Path**: Hive writes the records into a new directory named `delta_xxxx_xxxx` (containing transaction IDs) as ORC files.
+  2. **Update Path**: Since blocks are immutable, Hive performs a 'Delete-then-Insert'. It writes the deleted row keys into a `delete_delta_xxxx_xxxx` directory, and writes the new updated row values into a standard `delta` directory.
+  3. **Read Path**: When a client queries the table, Hive's transactional reader reads the base table files, overlays all active `delta` and `delete_delta` directories, filters out deleted keys, and returns the net active records.
+  
+  **Compaction**:
+  To prevent HDFS from filling up with thousands of delta files:
+  * **Minor Compaction**: A background daemon merges multiple small `delta` directories into a single unified delta directory.
+  * **Major Compaction**: Merges all `delta` and `delete_delta` files into the base ORC data file, permanently removing deleted records."

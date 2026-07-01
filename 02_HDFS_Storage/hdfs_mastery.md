@@ -65,7 +65,7 @@ Understanding read/write pathways at the packet level is crucial for performance
 2. **Metadata Verification**: The DistributedFileSystem makes an RPC call to the NameNode. The NameNode checks if the file exists, if the client has permissions, and creates a record in the namespace. It returns a list of target DataNodes for the first block.
 3. **Pipeline Construction**: The client initiates a pipeline by connecting to the first DataNode. DataNode 1 connects to DataNode 2, and DataNode 2 connects to DataNode 3.
 4. **Data Streaming**: The client splits the block data into small **Packets** (64KB) and queues them into a **Data Queue**. The packet is sent to DataNode 1, which writes it locally and forwards it down the pipeline.
-5. **Acknowledgment Loop**: Packets are moved to an **Ack Queue** on the client. DataNodes pass acknowledgements back up the pipeline (DN3 -> DN2 -> DN1 -> Client). Once the client receives ACKs from all nodes, it removes the packet from the Ack Queue.
+5. **Acknowledgment Loop**: Packets are moved to an **Ack Queue on the client. DataNodes pass acknowledgements back up the pipeline (DN3 -> DN2 -> DN1 -> Client). Once the client receives ACKs from all nodes, it removes the packet from the Ack Queue.
 6. **Finalization**: When the file is complete, the client calls `close()`, which flushes remaining packets and notifies the NameNode that the file write is complete.
 
 ### The Read Path:
@@ -134,52 +134,67 @@ hdfs mover -path /user/hive/warehouse/old_sales
 
 ---
 
-## 6. Administrative & Advanced CLI Operations
+## 6. Complete HDFS CLI Reference Library
 
-### System Diagnostics (`fsck`):
-```bash
-# Check overall HDFS health
-hdfs fsck /
+This library contains the exhaustive list of HDFS file system and administrative commands.
 
-# Check a specific file and show its blocks, locations, and network topology paths
-hdfs fsck /data/sales.csv -files -blocks -locations
+### A. File and Directory Operations (`hdfs dfs`)
+* **`ls`**: Lists directory contents.
+  * `hdfs dfs -ls /data`: List directory contents.
+  * `hdfs dfs -ls -R /data`: Recursively list all directories and files.
+* **`mkdir`**: Create directories.
+  * `hdfs dfs -mkdir -p /user/spark/logs`: Create nested directories.
+* **`put` / `copyFromLocal`**: Copy files from local OS disk to HDFS.
+  * `hdfs dfs -put -f local_file.txt /data/`: Upload file, forcing overwrite (`-f`).
+  * `hdfs dfs -put -q 1048576 local_file.txt /data/`: Upload with custom write buffer chunk size (1MB).
+* **`get` / `copyToLocal`**: Download files from HDFS to local OS disk.
+  * `hdfs dfs -get /data/file.txt ./local_dir/`: Download file.
+* **`cp` / `mv`**: Copy or move files within HDFS.
+  * `hdfs dfs -cp /raw/data.csv /backup/data.csv`
+  * `hdfs dfs -mv /tmp/data.csv /user/hive/warehouse/`
+* **`rm`**: Delete files.
+  * `hdfs dfs -rm /data/sales.csv`: Move file to HDFS Trash bin.
+  * `hdfs dfs -rm -r -skipTrash /data/temp_dir`: Force delete directory recursively, bypassing trash.
+* **`cat` / `tail` / `text`**: Read file contents.
+  * `hdfs dfs -cat /data/logs.txt`
+  * `hdfs dfs -tail /data/app.log`
+  * `hdfs dfs -text /data/logs.txt.gz`: Decompress and print text files (supports gzip, bzip2, zip formats).
+* **`du`**: Show space consumed.
+  * `hdfs dfs -du -h -s /user/hive/warehouse/`: Show human-readable summarized size of a warehouse path.
+* **`setrep`**: Change replication factor of a path.
+  * `hdfs dfs -setrep -w 2 -R /data/logs`: Set replication factor to 2 recursively, and wait (`-w`) until the replication matches the target across all blocks.
+* **`checksum`**: Print MD5-of-MD5 CRC32 checksum.
+  * `hdfs dfs -checksum /data/file.csv`: Compare file integrity across nodes.
 
-# Identify corrupt files (blocks missing all replicas)
-hdfs fsck / -list-corruptfileblocks
-```
+### B. HDFS Snapshot Operations
+* **`allowSnapshot`**: Allow snapshots on a path (needs admin role).
+  * `hdfs dfsadmin -allowSnapshot /data/project`
+* **`createSnapshot`**: Create metadata backup.
+  * `hdfs dfs -createSnapshot /data/project snap_v1`
+* **`deleteSnapshot`**: Delete backup.
+  * `hdfs dfs -deleteSnapshot /data/project snap_v1`
+* **`renameSnapshot`**: Rename backup.
+  * `hdfs dfs -renameSnapshot /data/project snap_v1 snap_v1_final`
 
-### Administrative Operations (`dfsadmin`):
-```bash
-# Display general cluster report (capacity, remaining space, dead nodes)
-hdfs dfsadmin -report
-
-# Safemode commands (NameNode is read-only, no replication occurs)
-hdfs dfsadmin -safemode get    # Check if NameNode is in Safemode
-hdfs dfsadmin -safemode enter  # Force enter Safemode (for maintenance)
-hdfs dfsadmin -safemode leave  # Force leave Safemode
-
-# Refresh DataNode configuration after adding/removing workers (decommissioning)
-hdfs dfsadmin -refreshNodes
-
-# Verify active and standby NameNode statuses in high-availability configuration
-hdfs haadmin -getServiceState nn1
-hdfs haadmin -getServiceState nn2
-```
-
-### Snapshot Management (Metadata backups without copying data blocks):
-```bash
-# Enable snapshots on a directory
-hdfs dfsadmin -allowSnapshot /user/sparkadmin/project
-
-# Create a snapshot
-hdfs dfs -createSnapshot /user/sparkadmin/project snap_v1
-
-# Restore data from a snapshot
-hdfs dfs -cp /user/sparkadmin/project/.snapshot/snap_v1/data.csv /user/sparkadmin/project/data.csv
-
-# Delete a snapshot
-hdfs dfs -deleteSnapshot /user/sparkadmin/project snap_v1
-```
+### C. HDFS Administrative & Checking Commands (`hdfs dfsadmin` / `hdfs fsck`)
+* **`report`**: Check overall health.
+  * `hdfs dfsadmin -report`: Shows capacity, cluster status, dead nodes, and corrupt blocks.
+* **`safemode`**: Manage read-only maintenance mode.
+  * `hdfs dfsadmin -safemode get`: Get state.
+  * `hdfs dfsadmin -safemode enter`: Force enter safemode.
+  * `hdfs dfsadmin -safemode leave`: Force leave safemode.
+  * `hdfs dfsadmin -safemode wait`: Block script execution until NameNode leaves safemode.
+* **`fsck`**: File system check.
+  * `hdfs fsck /`: Run file system scan.
+  * `hdfs fsck /data/sales.csv -files -blocks -locations -racks`: Print file details showing blocks, their rack topology locations, and node hosts.
+  * `hdfs fsck / -delete`: Scan HDFS and delete corrupted files immediately.
+  * `hdfs fsck / -move`: Scan HDFS and move corrupted blocks to `/lost+found`.
+* **`balancer`**: Cluster block distribution balancer.
+  * `hdfs balancer -threshold 10`: Balance block occupancy across DataNodes until the differences in disk usage per node are within 10%.
+* **`refreshNodes`**: Re-read worker hosts.
+  * `hdfs dfsadmin -refreshNodes`: Updates the NameNode on added or decommissioned DataNodes listed in the include/exclude configuration files.
+* **`metasave`**: Dump memory status.
+  * `hdfs dfsadmin -metasave metasave_dump.txt`: Save NameNode metadata status (replication queues, under-replicated block lists, heartbeats) to a local file.
 
 ---
 
@@ -200,12 +215,54 @@ Edit configurations in `hdfs-site.xml`:
 
 ---
 
-## 🎯 Exam and Interview Traps
+## 8. Enterprise Job Interview Q&A (HDFS Storage)
 
-1. **Trap: What is the "Small Files Problem" in HDFS, and how does it impact the NameNode?**
-   * **Answer**: If you store millions of 10KB files instead of a few 128MB files, each file requires a separate metadata entry (150 bytes) in the NameNode heap. This bloats NameNode RAM and causes long garbage collection pauses. It also slows down MapReduce/Spark jobs because each file spawns a separate task, introducing container startup overhead. Solve this by merging files using SequenceFiles, HAR (Hadoop Archives), or Spark coalesce/repartition.
+This section prepares you for production-level interview questions.
 
-2. **Trap: Why is it that when you delete a file in HDFS, the space on the cluster does not immediately increase?**
-   * **Answer**: Two reasons:
-     1. HDFS Trash is enabled (`fs.trash.interval` in `core-site.xml` is greater than 0). Deleted files are moved to `hdfs://user/.Trash/` and only permanently purged after the configured retention period.
-     2. Snapshots are active on the directory. The NameNode keeps reference blocks to protect the snapshot history, so space is only freed once the snapshots containing those blocks are deleted.
+### Q1: What happens under the hood when an Active NameNode crashes? Explain how the Standby takes over and how split-brain is prevented.
+* **How to explain this to the interviewer**:
+  Do not just say "ZooKeeper handles it." Break down the roles of the ZKFC, the ZooKeeper lock path, the JournalNode sync checks, and the active fencing methods.
+
+* **Model Answer**:
+  "When the Active NameNode crashes, the ZooKeeper Failover Controller (ZKFC) running on the active host detects the failure (either through heartbeats or because the NameNode process died). ZKFC immediately terminates its active session with the ZooKeeper cluster, which automatically deletes the ephemeral lock znode `/hadoop-ha/.../ActiveStandbyElectorLock`.
+  
+  The ZKFC on the Standby NameNode node is listening to changes on that znode. Once deleted, it attempts to acquire the lock. 
+  
+  Before transitioning the Standby NameNode to Active, ZKFC must perform **fencing** to ensure the old NameNode is dead and cannot write edits (Split-Brain scenario). ZKFC runs the configured fencing method:
+  1. It attempts to SSH into the old Active host and kill the NameNode process (`sshfence`).
+  2. If that fails, it runs a shell script (`shell` fence) to invoke a remote power switch (IPMI) or block the port on the switch.
+  
+  Once fenced, the Standby NameNode verifies that it has read all outstanding transaction edit logs from the JournalNodes. It then transitions its status to Active and begins accepting client connections."
+
+---
+
+### Q2: How do you identify, analyze, and resolve under-replicated or corrupted blocks in an HDFS cluster?
+* **How to explain this to the interviewer**:
+  Define what under-replicated and corrupted blocks are (under-replicated = count is less than target, corrupted = all replicas are lost or have checksum mismatches). State the commands you run to identify them and the resolution steps.
+
+* **Model Answer**:
+  "To identify the blocks, I run `hdfs fsck /` (File System Check). The output reports the percentage of healthy blocks, the list of under-replicated blocks, and corrupted blocks.
+  
+  * **Under-Replicated Blocks**: This occurs if a DataNode goes offline. The NameNode notices the missing block replicas via block reports. It places them in the replication queue, and other DataNodes automatically replicate them to match the target replication factor. If I need to speed up the process, I can run `hdfs dfs -setrep -R <target> /path` to trigger replication, or wait for the HDFS Balancer if disk imbalance is preventing replication.
+  
+  * **Corrupt Blocks (Missing Replicas)**: This is critical; it means all copies of the block are unreadable or lost. I run `hdfs fsck / -list-corruptfileblocks` to identify the specific files affected. 
+  
+  If the raw files can be recovered or re-ingested from a source (like Kafka or a database), I delete the corrupted files using `hdfs dfs -rm -skipTrash /path/file` to clean up HDFS, and re-run the ingestion pipeline. If the file is unrecoverable, I either restore from an HDFS snapshot (`.snapshot`) or extract the partial block segments from `/lost+found` using the `hdfs fsck / -move` command."
+
+---
+
+### Q3: What is HDFS Storage Tiering, and how would you configure a policy to automatically move cold data to archiving disks?
+* **How to explain this to the interviewer**:
+  Explain the concepts of heterogeneous storage, the available media types (SSD, DISK, ARCHIVE), the commands to apply policies, and how HDFS actually executes the movement of the block files.
+
+* **Model Answer**:
+  "HDFS Storage Tiering allows classifying files under specific storage media types based on data access frequency. We configure our DataNodes with mount tags in `hdfs-site.xml` under `dfs.datanode.data.dir` like `[SSD]/mnt/ssd/data,[ARCHIVE]/mnt/hdd/data`.
+  
+  To automate moving cold data to ARCHIVE:
+  1. I define an HDFS storage policy on the target directory (e.g. `/user/hive/warehouse/historical_logs`) using the command:
+     `hdfs storagepolicies -setStoragePolicy -path /user/hive/warehouse/historical_logs -policy COLD`
+  
+  2. Setting the policy only affects metadata. The physical blocks still reside on the hot DISK media. To force HDFS to move the blocks to ARCHIVE disks, I schedule a cron job that executes the **HDFS Mover tool**:
+     `hdfs mover -path /user/hive/warehouse/historical_logs`
+     
+  The Mover scans the blocks, identifies block placements violating the `COLD` policy, and initiates network-efficient migrations inside the DataNodes."

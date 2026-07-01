@@ -84,12 +84,6 @@ Distributed joins are expensive due to network traffic. Choosing the right patte
 
 DistributedCache is a mechanism provided by the MapReduce framework to cache application-specific files (text files, zip files, jar files) on worker nodes so they can be accessed locally by map/reduce tasks.
 
-### CLI Usage:
-```bash
-# Submit a job caching a dictionary file located in HDFS for map-side joins
-hadoop jar myjobs.jar JoinDriver -files hdfs://namenode:9000/data/dict.txt /input /output
-```
-
 ### Java API Implementation Pattern:
 ```java
 // Inside the Mapper
@@ -155,33 +149,89 @@ if (record.isCorrupt()) {
 
 ---
 
-## 5. Administrative & Diagnostics CLI
+## 5. Complete MapReduce Reference Library
 
-```bash
-# List all active and completed MapReduce jobs
-mapred job -list all
+This library details the configuration properties and job diagnostics commands.
 
-# Kill a running job
-mapred job -kill job_1688192837311_0001
+### A. Execution & Configuration Parameters (`mapred-site.xml` properties)
+* **`mapreduce.task.io.sort.mb`**: Size of the circular memory buffer for map outputs (default: `100`). Increase to `256` or `512` on large memory machines to prevent excessive spilling to disk.
+* **`mapreduce.map.sort.spill.percent`**: Buffer percentage threshold before launching a background spill thread (default: `0.80`).
+* **`mapreduce.task.io.sort.factor`**: Max number of spill streams to merge at once during sorting (default: `10`). Increase to `100` to speed up merge cycles.
+* **`mapreduce.job.reduces`**: Number of reducer tasks to launch for a job (default: `1`). In production, configure equal to \(1.75 \times \text{number of nodes} \times \text{vcores per node}\).
+* **`mapreduce.map.memory.mb`**: Memory container size allocated by YARN for a map task (default: `1024`).
+* **`mapreduce.reduce.memory.mb`**: Memory container size allocated by YARN for a reduce task (default: `1024`).
+* **`mapreduce.map.java.opts`**: JVM heap arguments for mapper. Must be smaller than `map.memory.mb` (usually ~80% of container size, e.g. `-Xmx800m`).
+* **`mapreduce.reduce.java.opts`**: JVM heap arguments for reducer. (e.g. `-Xmx800m`).
 
-# Check the status of a specific job
-mapred job -status job_1688192837311_0001
-
-# View specific counters for a completed job
-mapred job -counter job_1688192837311_0001 "DataQuality" "CORRUPT_RECORDS"
-```
+### B. Job Management & Execution CLI
+* **`hadoop jar`**: Run custom jar packages.
+  * `hadoop jar wordcount.jar com.company.WordCount -D mapreduce.job.reduces=4 /input /output`: Submit job, overriding reducer task count to 4.
+* **`mapred job`**: Administer and query jobs on the cluster.
+  * `mapred job -list`: List active jobs.
+  * `mapred job -list all`: List all historical jobs.
+  * `mapred job -status <job-id>`: Print details of a job, showing map/reduce percentage progress and JVM counters.
+  * `mapred job -kill <job-id>`: Terminate job execution.
+  * `mapred job -set-priority <job-id> HIGH`: Change YARN scheduling priority of the job.
+  * `mapred job -history <dir>`: Extract historical execution records from job history server files.
 
 ---
 
-## 🎯 Exam and Interview Traps
+## 6. Enterprise Job Interview Q&A (MapReduce)
 
-1. **Trap: What is the difference between an InputSplit and an HDFS Block?**
-   * **Answer**: An HDFS Block is a physical unit of storage (e.g., a 128MB file chunk on disk). An `InputSplit` is a logical boundary containing reference offsets, which the mapper reads. A split can span block boundaries. If an `InputSplit` spans two blocks, the RecordReader fetches the trailing record portion from the remote DataNode over the network, which violates data locality.
+This section prepares you for production-level interview questions.
 
-2. **Trap: Why does a MapReduce job fail with disk space errors even when HDFS has terabytes of free space?**
-   * **Answer**: HDFS space is irrelevant for Mapper intermediate files. Mappers write their circular buffer spills directly to the **local disk** of the worker nodes (`mapred.local.dir` or `/tmp`). If worker nodes have small local drives, the shuffle stage will fail with local storage out-of-space issues.
+### Q1: What is the Shuffle and Sort phase in MapReduce, and how do we tune its memory configurations to prevent local disk IO bottlenecks?
+* **How to explain this to the interviewer**:
+  Clearly describe the physical flow of data from the mapper memory to local disk, the HTTP transfers, and the reducer merge-sort. Then explain *which* specific configurations to change to keep data in-memory longer.
 
-3. **Trap: Why is using a Combiner not always safe?**
-   * **Answer**: The Combiner operates as a local reducer, executing before data is shuffled. It is only safe to use if the reduction operation is **associative** and **commutative**. 
-     * *Safe*: Sum, Min, Max, Count.
-     * *Unsafe*: Average. A combiner calculating the average of local splits will result in mathematically incorrect averages when the reducer merges them.
+* **Model Answer**:
+  "The Shuffle and Sort phase is the process of moving intermediate data from the mappers to the reducers. 
+  
+  Mappers write their outputs to an in-memory circular buffer (`mapreduce.task.io.sort.mb`, default 100MB). When it reaches 80% capacity (`mapreduce.map.sort.spill.percent`), a background thread sorts the data by partition and key, and writes a spill file to the local disk. When the map task finishes, all individual spills are merged and sorted into one master output file. The Reducer pulls its corresponding key partition over HTTP and merges it (using merge-sort) in memory before passing it to the reduce function.
+  
+  To tune and prevent disk IO bottlenecks:
+  1. I increase the circular buffer size to `256MB` or `512MB` (`mapreduce.task.io.sort.mb`). This allows larger volumes of data to be sorted in memory, minimizing the number of intermediate files written to disk.
+  2. I increase the merge factor (`mapreduce.task.io.sort.factor`) from the default `10` to `100`. This allows the merger thread to consolidate up to 100 spill files in a single pass, drastically reducing merge read/write cycles.
+  3. I allocate larger JVM heaps using `mapreduce.map.java.opts` to prevent Out-of-Memory exceptions on executors during sorting."
+
+---
+
+### Q2: What is a Map-Side Join, how does it use the DistributedCache, and what are its key limitations?
+* **How to explain this to the interviewer**:
+  Start by stating that it is a join that occurs entirely in the map phase without a shuffle stage. Explain the role of the DistributedCache in sending the small table to memory and contrast it with a standard join.
+
+* **Model Answer**:
+  "A Map-Side Join joins two tables entirely in the mapper phase without forcing a network shuffle. 
+  
+  To implement it, the smaller table (lookup metadata) is sent to all worker nodes via the **DistributedCache** (`-files` option in CLI). In the mapper's `setup()` method, the task reads this cached file from the local OS path and loads it into a standard JVM `HashMap` structure. In the `map()` method, the task streams the large table line-by-line, parses the join key, looks up matching fields in the HashMap, and writes the output.
+  
+  **Limitations**:
+  1. The small table must fit entirely in the mapper JVM heap memory. If it is too large, the mapper crashes with a `java.lang.OutOfMemoryError`.
+  2. If joining two large tables, we cannot use this approach. We must use a **Reduce-Side Join**, which shuffles both tables by the join key to the reducers, introducing severe network latency."
+
+---
+
+### Q3: What is a Combiner? Why is it called a 'Local Reducer' and why is it not always safe to use? Provide a specific mathematical example.
+* **How to explain this to the interviewer**:
+  Define the combiner's purpose (local aggregation to reduce network traffic on writes). Then use the mathematical average calculation to show why it is not commutative and associative, leading to corrupt results if used incorrectly.
+
+* **Model Answer**:
+  "A **Combiner** is an optional class that runs on the mapper node before data is shuffled. It aggregates the mapper output values locally, reducing the number of key-value pairs transferred across the network to the reducers.
+  
+  It is only safe to use if the aggregation function is **associative** (\(A + (B + C) = (A + B) + C\)) and **commutative** (\(A + B = B + A\)).
+  
+  **Why it is unsafe for Average calculations**:
+  Suppose a mapper has two partitions yielding data:
+  * Partition 1: `(Key, 10)`, `(Key, 20)`
+  * Partition 2: `(Key, 30)`, `(Key, 40)`, `(Key, 50)`
+  
+  * **Without Combiner**: The reducer receives all 5 records: `(Key, [10, 20, 30, 40, 50])`. 
+    Correct Average = \((10 + 20 + 30 + 40 + 50) / 5 = 150 / 5 = 30\).
+  
+  * **With Combiner**:
+    * Combiner 1 runs on Partition 1: Average = \((10 + 20) / 2 = 15\). Output: `(Key, 15)`.
+    * Combiner 2 runs on Partition 2: Average = \((30 + 40 + 50) / 3 = 40\). Output: `(Key, 40)`.
+    * Reducer receives intermediate averages: `(Key, [15, 40])`.
+    * Reducer calculates average of averages = \((15 + 40) / 2 = 27.5\).
+  
+  The result `27.5` is mathematically incorrect. Therefore, a Combiner cannot be used for `Average` calculations."

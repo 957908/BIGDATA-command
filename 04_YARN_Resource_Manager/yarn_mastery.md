@@ -77,81 +77,110 @@ Tuning YARN memory and CPU variables prevents Spark executors and Hadoop map tas
 
 ---
 
-## 4. Resource Calculation Example (Designing a Cluster Node)
+## 4. Complete YARN CLI Reference Library
 
-Imagine a node with **128 GB RAM** and **32 Physical Cores**. Let's calculate the YARN configuration parameters:
+This library details all YARN job query, node tracking, queue allocation, and administrative commands.
 
-1. **System Overhead Reserves**:
-   * Operating System: **16 GB**
-   * Hadoop Daemons (DataNode + NodeManager): **8 GB**
-   * Available for YARN: \(128\text{ GB} - 24\text{ GB} = 104\text{ GB}\)
-2. **YARN Configurations**:
-   ```xml
-   <!-- Total RAM for YARN containers on this host: 104 GB -->
-   <property>
-       <name>yarn.nodemanager.resource.memory-mb</name>
-       <value>106496</value>
-   </property>
+### A. YARN Application Management (`yarn application`)
+* **`-list`**: List submitted applications.
+  * `yarn application -list`: List active applications.
+  * `yarn application -list -appStates FINISHED,KILLED,FAILED`: List completed applications.
+  * `yarn application -list -appTypes SPARK`: Filter applications by type.
+* **`-status`**: Query application details.
+  * `yarn application -status application_1688192837311_0005`: Displays metadata, diagnostics, tracking URL, and resource utilization.
+* **`-kill`**: Force terminate a job.
+  * `yarn application -kill application_1688192837311_0005`
+* **`-movetoqueue`**: Move a running application to another queue.
+  * `yarn application -movetoqueue application_1688192837311_0005 -queue root.finance`
 
-   <!-- Total Cores for YARN containers: 32 -->
-   <property>
-       <name>yarn.nodemanager.resource.cpu-vcores</name>
-       <value>32</value>
-   </property>
+### B. YARN Node Management (`yarn node`)
+* **`-list`**: Print active node statuses.
+  * `yarn node -list`: Shows host addresses, states, active containers, memory, and CPU limits.
+  * `yarn node -list -states RUNNING,UNHEALTHY`: Filter nodes.
+* **`-status`**: Detailed node report.
+  * `yarn node -status worker-node-1:45454`
 
-   <!-- Minimum container allocation: 2 GB -->
-   <property>
-       <name>yarn.scheduler.minimum-allocation-mb</name>
-       <value>2048</value>
-   </property>
+### C. Queue Diagnostics (`yarn queue`)
+* **`-status`**: Query allocation of a specific queue.
+  * `yarn queue -status root.default`: Shows absolute capacity, current capacity, state, and child queues.
 
-   <!-- Maximum container allocation: 104 GB -->
-   <property>
-       <name>yarn.scheduler.maximum-allocation-mb</name>
-       <value>106496</value>
-   </property>
-   ```
+### D. Log Extraction & Diagnostics (`yarn logs`)
+* **`yarn logs -applicationId <app-id>`**: Dumps all aggregated log files (from stdout, stderr, syslog) from all executors distributed across the cluster nodes.
+* **`yarn logs -applicationId <app-id> -containerId <container-id>`**: Retrieve logs for a specific task container.
+* **`yarn logs -applicationId <app-id> -nodeAddress <node-ip:port>`**: Retrieve logs written on a specific worker node.
 
----
-
-## 5. Diagnostic & Monitoring CLI Commands
-
-When applications hang or fail, use the YARN CLI to inspect queues, kill jobs, and extract aggregated log files.
-
-```bash
-# List all running YARN applications
-yarn application -list
-
-# Filter applications by state (RUNNING, SUBMITTED, ACCEPTED, KILLED, FAILED, FINISHED)
-yarn application -list -appStates RUNNING
-
-# Get status of a specific application (shows AM host, tracking URL, and resource usage)
-yarn application -status application_1688192837311_0005
-
-# Kill a stuck application
-yarn application -kill application_1688192837311_0005
-
-# Check resource status of all active cluster nodes
-yarn node -list -all
-
-# Display resource details of the queue hierarchy
-yarn queue -status root.default
-
-# Extract logs of a completed application (Requires Log Aggregation enabled)
-yarn logs -applicationId application_1688192837311_0005 > app_execution.log
-```
+### E. Resource Manager Administration (`yarn rmadmin`)
+* **`-refreshQueues`**: Re-load YARN scheduler configurations (`capacity-scheduler.xml`) without restarting the ResourceManager.
+* **`-refreshNodes`**: Re-read inclusion/exclusion file paths for NodeManagers (for decommissioning hosts).
+* **`-getServiceState`**: Check Active/Standby status in HA configuration.
+  * `yarn rmadmin -getServiceState rm1`
+* **`-transitionToActive` / `-transitionToStandby`**: Manually force state change.
+  * `yarn rmadmin -transitionToActive rm1 --forceactive`
 
 ---
 
-## 🎯 Exam and Interview Traps
+## 5. Enterprise Job Interview Q&A (YARN)
 
-1. **Trap: Why does my Spark job fail with "Container killed by YARN for exceeding memory limits. 4.1 GB of 4.0 GB physical memory used"?**
-   * **Answer**: YARN monitors container physical memory usage. In Java/Scala/Python applications, overhead memory (off-heap memory, thread stacks, Python processes in PySpark) is allocated outside the JVM heap. If the sum of heap + off-heap exceeds the container allocation request, NodeManager kills it. Fix this by increasing `spark.executor.memoryOverhead` or allocating larger memory limits via YARN configs.
+This section prepares you for production-level interview questions.
 
-2. **Trap: Why is my YARN application stuck in the `ACCEPTED` state and not moving to `RUNNING`?**
-   * **Answer**: This is a classic "Queue Starvation" issue. It occurs when:
-     1. The queue resource capacity is fully occupied by other running jobs.
-     2. The cluster is out of memory to allocate a container for the application's **ApplicationMaster (AM)**. If AMs occupy too much of the queue capacity, new jobs cannot start. Adjust `yarn.scheduler.capacity.maximum-am-resource-percent` (default is 10-20%) to limit the resources consumed by ApplicationMasters.
+### Q1: Describe the step-by-step lifecycle of a YARN job. Also, explain the difference between Spark client mode and Spark cluster mode under YARN.
+* **How to explain this to the interviewer**:
+  Start by walking through the handshake between the client, ASM, and the first container (AM). Then, explain the container request loop. Finally, clarify that the key difference between Client and Cluster modes is where the Driver process physically runs.
 
-3. **Trap: Why is it bad to disable `yarn.nodemanager.vmem-check-enabled`?**
-   * **Answer**: Disabling it stops NodeManager from killing containers that exceed virtual memory limits (which often happen on Linux due to aggressive allocation behaviors in JVMs). However, while disabling the vmem check prevents premature job crashes, it can lead to OS swap usage or system-wide Out-of-Memory crashes if physical memory is exhausted. Set `yarn.nodemanager.vmem-pmem-ratio` to a higher value (e.g. `3.0` or `5.0`) instead of disabling the check completely.
+* **Model Answer**:
+  "When a client submits an application:
+  1. The client connects to the ResourceManager (RM) ApplicationsManager (ASM) and requests an Application ID.
+  2. The ASM allocates a container on a NodeManager (NM) and starts the framework-specific **ApplicationMaster (AM)**.
+  3. The AM initializes, registers with the RM Scheduler, and determines its resource needs.
+  4. The AM submits resource requests (vCores, Memory) to the RM Scheduler.
+  5. Once containers are allocated on NMs, the AM connects to those NMs and launches task processes (e.g. Spark Executors).
+  6. The tasks report status back to the AM. When complete, the AM unregisters from the RM and shuts down.
+  
+  **Difference between Client and Cluster modes (e.g. in Spark)**:
+  * In **Client Mode**, the Spark Driver process runs locally on the client host machine that submitted the job. The YARN container only hosts the Executor processes. The AM in the container acts solely as a helper to request resources from YARN. If the client machine shuts down or loses connection, the job dies. Used for interactive analysis (e.g., notebook shells).
+  * In **Cluster Mode**, the Spark Driver process runs inside the YARN ApplicationMaster container allocated on a worker node. The client machine can disconnect immediately after submission. The driver is hosted safely inside the cluster with restart tolerance. Used for production batch jobs."
+
+---
+
+### Q2: What is the YARN container sizing formula, and how do you calculate the optimal memory/CPU properties for worker nodes?
+* **How to explain this to the interviewer**:
+  Do not just list XML tags. Walk the interviewer through the exact subtraction math (total RAM minus OS reserve, minus DataNode reserve) to arrive at the container increments.
+
+* **Model Answer**:
+  "The container sizing formula requires reserving memory for the operating system and Hadoop master/worker daemons first to prevent kernel out-of-memory crashes.
+  
+  Let's assume a physical node has **64 GB RAM** and **16 Cores**:
+  1. **OS Reserve**: We allocate `8GB` for OS memory, disk page cache, and SSH utilities.
+  2. **Daemon Reserve**: We allocate `4GB` for the HDFS DataNode JVM and NodeManager JVM combined.
+  3. **YARN Memory Allocation**: \(64\text{ GB} - 12\text{ GB} = 52\text{ GB}\). We set `yarn.nodemanager.resource.memory-mb` to `53248` (in MB).
+  4. **YARN CPU Allocation**: We allocate 16 vCores: `yarn.nodemanager.resource.cpu-vcores = 16`.
+  5. **Container Boundaries**:
+     * We set `yarn.scheduler.minimum-allocation-mb = 2048` (2GB).
+     * We set `yarn.scheduler.maximum-allocation-mb = 53248` (52GB).
+  
+  If we run Spark executors, we set each executor container to request `4 vCores` and `12GB` RAM. This allows us to run up to 4 executors per node securely without causing thrashing."
+
+---
+
+### Q3: What is YARN Queue Preemption, and how does it prevent resource starvation in multi-tenant environments?
+* **How to explain this to the interviewer**:
+  Explain what happens when a queue is over-allocated and another queue suddenly requests resources. Then detail how preemption forces the release of resources, and how it is configured.
+
+* **Model Answer**:
+  "YARN Queue Preemption is a feature of the Capacity and Fair Schedulers. It resolves the problem of resource hogging. 
+  
+  If Queue A (e.g. Marketing, 30% capacity) is idle, and Queue B (e.g. Data Science, 70% capacity) submits a large job, YARN allows Queue B to borrow Queue A's unused capacity and run jobs on 100% of the cluster. However, if Queue A suddenly submits a high-priority job, it will experience **starvation** because all containers are occupied by Queue B's tasks.
+  
+  With **Preemption enabled**:
+  1. YARN monitors queue guarantees. It notices Queue A is starved of its 30% allocation.
+  2. YARN asks Queue B to gracefully release containers.
+  3. If Queue B does not terminate its tasks within a specific timeout (`yarn.resourcemanager.monitor.capacity-scheduler.preemption.grace_period`), the ResourceManager kills Queue B's containers forcefully and re-allocates them to Queue A.
+  
+  To configure this in `yarn-site.xml`, we enable the scheduling monitor:
+  ```xml
+  <property>
+      <name>yarn.resourcemanager.scheduler.monitor.enable</name>
+      <value>true</value>
+  </property>
+  ```
+  And specify the default preemption policy class."

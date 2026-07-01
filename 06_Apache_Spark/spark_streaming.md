@@ -41,7 +41,7 @@ flowchart TD
 
 Processing time series data requires separating when an event occurred from when it was processed by the cluster.
 
-* **Event Time**: The timestamp embedded within the record itself, generated at the source device (e.g., log time, sensor timestamp).
+* **Event Time**: The timestamp embedded within the record itself, generated at the source device.
 * **Processing Time**: The local time of the Spark executor node executing the task.
 
 ### Windowing Semantics:
@@ -91,7 +91,55 @@ When starting a streaming query, configure `checkpointLocation`. If the applicat
 
 ---
 
-## 5. Structured Streaming PySpark Code Implementation
+## 5. Complete Spark Streaming API & Configuration Reference
+
+This library covers the streaming connector properties and query controls.
+
+### A. Kafka Streaming Source Options
+```python
+stream_df = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("subscribe", "iot-events") \
+    .option("startingOffsets", "latest") \
+    .option("failOnDataLoss", "false") \
+    .option("maxOffsetsPerTrigger", "50000") \
+    .load()
+```
+* **`startingOffsets`**: Read position at startup (`earliest`, `latest`, or JSON map of offsets).
+* **`failOnDataLoss`**: Raise alert/fail if offsets disappear from Kafka brokers (e.g., due to log deletion retention). Set to `false` for robust recovery.
+* **`maxOffsetsPerTrigger`**: Sets rate-limiting bounds (max messages per micro-batch). Prevents cluster crash during peak load restarts.
+
+### B. Output Modes & Write Stream APIs
+```python
+query = processed_df.writeStream \
+    .format("parquet") \
+    .outputMode("append") \
+    .option("path", "hdfs:///warehouse/outputs") \
+    .option("checkpointLocation", "hdfs:///checkpoints/stream_1") \
+    .trigger(processingTime="30 seconds") \
+    .start()
+```
+* **`outputMode()`**: Specifies write policies.
+  * `append` (default): Only new rows added to the result table are written. Best for raw ingestion.
+  * `update`: Only rows updated in the result table since the last trigger are written. Best for windowed aggregations.
+  * `complete`: The entire updated result table is rewritten to the sink. Best for global summaries.
+* **`trigger()`**: Sets epoch boundaries.
+  * `processingTime="30 seconds"`: Micro-batch trigger.
+  * `once=True`: Evaluates the query once as a single batch and exits (useful for nightly delta syncs).
+  * `continuous="1 second"`: Low-latency continuous mode.
+
+### C. Streaming Query Runtime Operations
+* **`query.id`**: Unique static query ID.
+* **`query.runId`**: Unique instance ID for the current execution run.
+* **`query.status`**: Check state (e.g., `{'message': 'Active', 'isDataAvailable': true, 'isTriggerActive': false}`).
+* **`query.lastProgress`**: Inspect metrics (throughput rates, processed offsets, state storage size).
+* **`query.stop()`**: Stop execution.
+* **`spark.streams.active`**: Return a list of all active streaming queries running under the current SparkSession.
+
+---
+
+## 6. Structured Streaming PySpark Code Implementation
 
 Here is a master-level PySpark template reading from Kafka, applying watermarking and windowed aggregations, and writing results to a console sink.
 
@@ -161,13 +209,67 @@ query.awaitTermination()
 
 ---
 
-## 🎯 Exam and Interview Traps
+## 7. Enterprise Job Interview Q&A (Spark Streaming)
 
-1. **Trap: Why are my watermark aggregates not emitting any output in `Append` output mode?**
-   * **Answer**: In `Append` mode, rows are only written to the sink once they are final. Because a window can receive late-arriving data, Spark cannot write the window data until the watermark progresses past the window's end-time. If the stream stops receiving new events, the watermark does not progress, and no data is written. Use `Update` mode to see real-time updates as records arrive.
+This section prepares you for production-level interview questions.
 
-2. **Trap: Can we join a streaming DataFrame with a static DataFrame, and what are the limitations?**
-   * **Answer**: Yes, Stream-Static joins are supported (e.g., lookup table joined to transaction stream). However, the static DataFrame is loaded once at query startup and is not automatically refreshed if the underlying source table changes. If you need dynamic static updates, you must use custom stateful processing (`mapGroupsWithState`) or restart the streaming query.
+### Q1: What is a Watermark in Spark Structured Streaming? How does it handle late data, and how does it clean up the StateStore from memory leaks?
+* **How to explain this to the interviewer**:
+  Explain that watermarking tracks event time (embedded in records) and subtracts the late threshold. Walk through the math of how incoming records are either processed or discarded, and how finished windows are deleted from the StateStore JVM memory.
 
-3. **Trap: Why does my streaming application crash with Out-Of-Memory (OOM) errors even when I have watermarking enabled?**
-   * **Answer**: Watermarking only cleans up state when grouping by columns containing the event-time timestamp. If you group by `device_id` alone (without referencing the `window` or event-time column), Spark cannot discard older states because it expects device records to arrive indefinitely. Ensure `event_time` is part of the `groupBy` fields.
+* **Model Answer**:
+  "A watermark is a dynamic event-time threshold used in stateful streaming queries to handle late-arriving data and prevent memory exhaustion.
+  
+  Mathematically, Spark tracks the maximum event-time value seen across all partitions. The watermark is calculated as:
+  $$\text{Watermark} = \max(\text{Event Time seen so far}) - \text{Allowed Late Time}$$
+  
+  **How it handles late data**:
+  When a new record arrives:
+  1. If its event-time is **greater** than the current watermark, Spark accepts it, updates the aggregated window state in the StateStore, and writes updates to the sink.
+  2. If its event-time is **less** than the watermark, Spark classifies it as 'too late' and discards it.
+  
+  **How it prevents memory leaks**:
+  Without watermarking, Spark must keep the state for every past time window in memory forever, as it assumes records for any past date could eventually arrive. This causes the StateStore (usually running inside HDFS-backed RocksDB or JVM RAM) to overflow. When the watermark progresses past the end-time of a specific window, Spark knows no more records for that window will be accepted. It deletes the window state from memory, preventing memory leaks."
+
+---
+
+### Q2: Compare the three output modes in Spark Structured Streaming: Append, Update, and Complete. When would you use each?
+* **How to explain this to the interviewer**:
+  Clearly describe what is written to the sink at each micro-batch trigger, and match each mode to a real-world scenario.
+
+* **Model Answer**:
+  "Structured Streaming supports three output modes depending on the query logic:
+  
+  1. **Append Mode** (Default):
+     * *Behavior*: Only new rows added to the result table since the last micro-batch are written to the sink. Existing rows cannot be modified.
+     * *Use Case*: Raw ingestion pipelines (e.g. reading from Kafka and writing directly to Parquet files). It is the only mode supported for file-based sinks because files are append-only.
+     
+  2. **Update Mode**:
+     * *Behavior*: Only rows that were updated or newly added in the result table since the last trigger are written. If a row is unchanged, it is not output.
+     * *Use Case*: Real-time aggregates (e.g. hourly page views per device). It writes updates to database sinks (like Cassandra or JDBC) without rewriting the entire table.
+     
+  3. **Complete Mode**:
+     * *Behavior*: The entire updated result table is rewritten to the sink every time a trigger runs.
+     * *Use Case*: Dashboard summaries (e.g. overall count of errors). Since it rewrites all states, it is only supported if the query contains aggregations (otherwise the result table would grow indefinitely)."
+
+---
+
+### Q3: How does Spark Structured Streaming guarantee end-to-end exactly-once processing? Detail the requirements.
+* **How to explain this to the interviewer**:
+  Explain that exactly-once is a coordinated effort between the input source, the processing engine's checkpointing system, and the output sink. Walk through the failure-and-recovery sequence.
+
+* **Model Answer**:
+  "End-to-end exactly-once processing requires a coordinated handshake across three components:
+  
+  1. **Replay-able Source**: The input source must support re-reading data from specified offsets (like Kafka partition offsets). If a crash occurs, Spark must be able to pull the exact same data again.
+  2. **Engine Checkpointing & WAL**: Spark must write metadata checkpoints and a Write-Ahead Log (WAL) to a persistent, secure file system (HDFS/S3). This logs the exact partition offsets processed in each micro-batch trigger.
+  3. **Idempotent Sink**: The output sink must be able to handle duplicate writes from the same offset without corrupting the final state. This can be achieved through:
+     * *Idempotency*: Overwriting keys based on unique IDs (e.g. database upsert).
+     * *Atomic Transactions*: A two-phase commit protocol (like writing files to a temporary directory and committing them via atomic file renames when the batch completes).
+  
+  **Recovery Protocol**:
+  If an executor crashes mid-batch:
+  * The Spark Driver restarts, reads the checkpoint WAL, and identifies the uncommitted batch offsets.
+  * It pulls the data from those exact offsets from the replay-able source.
+  * It re-executes the processing.
+  * The idempotent sink filters out the duplicates or overwrites them, guaranteeing no double-counting."

@@ -93,7 +93,7 @@ Modern Spark (DataFrame/Dataset APIs) achieves performance via two core engines.
 ### The Catalyst Optimizer:
 An extensible query optimizer for Spark SQL and DataFrame operations. It goes through four phases:
 1. **Analysis**: Resolves column and table names against the catalog metadata.
-2. **Logical Optimization**: Applies rule-based optimizations such as **Constant Folding** (simplifying calculations) and **Predicate Pushdown** (pushing filters down to the file level to avoid reading redundant data).
+2. **Logical Optimization**: Applies rule-based optimizations such as **Constant Folding** and **Predicate Pushdown**.
 3. **Physical Planning**: Generates multiple physical execution strategies and selects the cheapest option using a Cost Model.
 4. **Code Generation**: Generates Java bytecode at runtime for execution on worker nodes.
 
@@ -122,93 +122,132 @@ Spark selects join strategies dynamically based on table size, join keys, and pa
   3. **Merge**: Spark walks through both sorted lists sequentially and merges matching keys.
 * **Performance**: Highly reliable and scalable; default for large-scale table joins.
 
-### 3. Shuffle Hash Join (SHJ)
-* **Precondition**: Used when partitions are already relatively small but not sorted, or if sort-merge join is disabled.
-* **Mechanism**: Shuffles datasets by join keys, builds an in-memory hash map of one partition, and streams the second partition through it.
-
 ---
 
-## 6. Spark Unified Memory Management
+## 6. Complete Spark Core & SQL Reference Library
 
-Spark executors split their JVM heap memory into Execution and Storage pools to balance processing and caching.
+This section covers the execution flags, configurations, and core DataFrame functions.
 
-```text
-Executor JVM Heap Memory Layout (spark.executor.memory)
-┌──────────────────────────────────────────────────────────────────────────┐
-│ Reserved Memory (300 MB)                                                 │
-├──────────────────────────────────────────────────────────────────────────┤
-│ Usable Memory (JVM Heap - 300 MB)                                        │
-│  ├── User Memory (40%) - Spark Metadata, User Data structures, UDFs      │
-│  └── Spark Memory (60% - spark.memory.fraction)                          │
-│       ├── Storage Memory (50% - spark.memory.storageFraction)            │
-│       │   - Caching (.cache(), .persist()), broadcast variables          │
-│       └── Execution Memory (50%)                                         │
-│           - Buffers for Shuffles, Joins, Aggregations                    │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+### A. CLI Application Submission (`spark-submit`)
+* **Syntax**:
+  ```bash
+  spark-submit \
+    --class com.company.SparkJob \
+    --master yarn \
+    --deploy-mode cluster \
+    --num-executors 10 \
+    --executor-memory 8g \
+    --executor-cores 4 \
+    --driver-memory 4g \
+    --driver-cores 2 \
+    --conf spark.sql.shuffle.partitions=100 \
+    --conf spark.sql.adaptive.enabled=true \
+    --jars hdfs:///libs/mysql-connector.jar \
+    --files hdfs:///configs/app.properties \
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.0 \
+    hdfs:///jobs/spark-application.jar \
+    /input/path /output/path
+  ```
+* **Flags Detailed**:
+  * `--master`: Execution context (e.g. `yarn`, `k8s://https://api`, `local[*]`).
+  * `--deploy-mode`: Deploy driver inside executor cluster (`cluster`) or locally on client host (`client`).
+  * `--num-executors`: Number of executor nodes to allocate (YARN only).
+  * `--executor-cores`: Number of concurrent tasks an executor can run (optimal is 4-5).
+  * `--executor-memory`: RAM size per executor JVM.
 
-* **Unified Dynamic Borrowing**: Storage and Execution memory can borrow space from each other if the other is idle.
-* **Preemption Rules**: If Execution memory requires space occupied by Storage, it will evict cached blocks to disk. However, Storage memory **cannot** evict Execution memory blocks. Execution tasks always take priority.
+### B. Interactive Shells
+* **`spark-shell`**: Launch interactive Scala environment.
+* **`pyspark`**: Launch interactive Python environment.
+* **`spark-sql`**: Launch CLI SQL interface directly.
 
----
+### C. Performance & Resource Configuration Variables (`spark-defaults.conf` / code)
+* **`spark.sql.shuffle.partitions`**: Sets partition counts for wide joins/aggregations (default: `200`). Set higher for large datasets to prevent disk spills.
+* **`spark.sql.adaptive.enabled`**: Enable **Adaptive Query Execution (AQE)** (default: `true` in 3.x).
+* **`spark.sql.autoBroadcastJoinThreshold`**: Maximum size in bytes of a table to broadcast (default: `10485760` - 10MB). Set to `-1` to disable broadcasting.
+* **`spark.memory.fraction`**: JVM usable memory fraction dedicated to Spark execution/storage (default: `0.6`).
+* **`spark.memory.storageFraction`**: Fraction of Spark memory protected against eviction for caching (default: `0.5`).
+* **`spark.executor.memoryOverhead`**: Extra non-heap memory allocated per executor container (default: `max(384mb, 10% of executor RAM)`). Increase to prevent YARN killing container.
+* **`spark.serializer`**: Serialization format. Change from default Java serialization to Kryo for 10x compression:
+  `spark.serializer=org.apache.spark.serializer.KryoSerializer`
+* **`spark.dynamicAllocation.enabled`**: Dynamically scale executor counts based on queue backlog (`true`/`false`).
 
-## 7. PySpark & DataFrame Code Implementations
-
-### DataFrame Creation, Optimizations, & Join Example:
+### D. DataFrame API Operations Cheat Sheet
 ```python
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, broadcast, expr
+# Select, Filter, and Column creations
+df_sel = df.select("user_id", "amount")
+df_fil = df.filter((df.amount > 100.0) & (df.country == "US"))
+df_col = df.withColumn("taxed_amount", df.amount * 1.18)
 
-# Initialize optimized Spark Session
-spark = SparkSession.builder \
-    .appName("SparkOptimizedJoin") \
-    .config("spark.sql.shuffle.partitions", "200") \
-    .config("spark.sql.adaptive.enabled", "true") \
-    .getOrCreate()
+# Grouping and Aggregating
+df_agg = df.groupBy("country").agg({"amount": "sum", "user_id": "count"})
 
-# 1. Read Large Sales Data (Parquet Columnar Format)
-sales_df = spark.read.parquet("hdfs:///warehouse/sales")
+# Repartitioning vs Coalescing
+df_rep = df.repartition(100, "country") # Hash-repartitions data across 100 partitions
+df_coa = df.coalesce(2)                 # Decreases partition count without shuffling
 
-# 2. Read Small Users Lookup Data (CSV format)
-users_df = spark.read.option("header", "true").csv("hdfs:///warehouse/users.csv")
-
-# 3. Filter and Add Column (Predicate Pushdown will optimize this filter)
-filtered_sales = sales_df \
-    .filter(col("amount") > 100.0) \
-    .withColumn("taxed_amount", col("amount") * 1.18)
-
-# 4. Perform Broadcast Hash Join (forcing broadcast on small users table)
-joined_df = filtered_sales.join(
-    broadcast(users_df),
-    on="user_id",
-    how="inner"
-)
-
-# 5. Cache intermediate results for repetitive action calls
-joined_df.cache()
-
-# 6. Execute Action (Outputs to console and saves to HDFS)
-joined_df.show(10)
-joined_df.write.partitionBy("country").parquet("hdfs:///warehouse/processed_sales")
+# Diagnosing Execution
+df.explain(True) # Print Parsed, Analyzed, Optimized Logical, and Physical Execution Plans
 ```
 
 ---
 
-## 🎯 Exam and Interview Traps
+## 7. Enterprise Job Interview Q&A (Spark Core & SQL)
 
-1. **Trap: What is the difference between `.cache()` and `.persist()`, and how do you choose?**
-   * **Answer**: `.cache()` is a shorthand for `.persist(StorageLevel.MEMORY_ONLY)` (or `MEMORY_AND_DISK` for DataFrames). `.persist()` allows passing a specific `StorageLevel` parameter:
-     * `MEMORY_ONLY`: Stores deserialized Java objects in memory. Fast but memory intensive.
-     * `MEMORY_AND_DISK`: Spills partitions to local disk if memory is full.
-     * `MEMORY_ONLY_SER`: Stores serialized byte arrays. Reduces RAM footprint at the cost of CPU serialization cycles.
-     * `DISK_ONLY`: Stores blocks on local disk only.
-     * `_2` suffix (e.g., `MEMORY_ONLY_2`): Replicates block data to two executor nodes for high fault tolerance.
+This section prepares you for production-level interview questions.
 
-2. **Trap: Why is it bad to run `.collect()` on large DataFrames, and what should you use instead?**
-   * **Answer**: `.collect()` pulls all partition data from every distributed executor across the network to the single JVM of the Driver program. If the dataset size exceeds the Driver's heap memory (`spark.driver.memory`), the Driver crashes with an Out-of-Memory (OOM) error. Use `.take(n)` or `.show(n)` to fetch only a preview slice, or write the results directly to storage using `.write.save()`.
+### Q1: Explain Spark memory management in detail. How do Execution and Storage pools interact, and what causes OOM executor crashes?
+* **How to explain this to the interviewer**:
+  Use the standard layout diagram. Explain that memory is split between execution (shuffles/joins) and storage (caches). Detail the dynamic borrowing rule and contrast it with Off-heap/Overhead memory.
 
-3. **Trap: What is Data Skewness in Spark, and how do you resolve it?**
-   * **Answer**: Data Skewness occurs when one partition has significantly more records than the others (e.g., joining on a key where 90% of rows have the value `NULL` or a default ID like `0`). The task processing the skewed partition takes hours while all other tasks finish in seconds.
-     * *Solutions*:
-       1. **Salting**: Appending a random number prefix (e.g., `key_0`, `key_1`) to the join key of the skewed dataset, and replicating corresponding keys in the secondary dataset to distribute the load across multiple executors.
-       2. **Adaptive Query Execution (AQE)**: Set `spark.sql.adaptive.skewJoin.enabled=true`. Spark automatically detects skewed partitions at runtime and splits them into smaller sub-partitions.
+* **Model Answer**:
+  "Spark manages the JVM heap memory of each executor in three primary blocks:
+  1. **Reserved Memory** (300MB): Kept for Spark internal daemons.
+  2. **User Memory** (40% of usable heap): Stores user structures, metadata, and custom UDF variables.
+  3. **Spark Memory** (60% of usable heap): Managed by the unified manager and split 50/50 between:
+     * **Execution Memory**: Shuffling, joining, and aggregating task buffers.
+     * **Storage Memory**: Caching data tables (`.cache()`) and broadcast variables.
+  
+  **Dynamic Borrowing**: The boundary between Execution and Storage is dynamic. If Storage is empty, Execution can borrow 100% of it. If Storage is full, and Execution needs memory, it will evict cached blocks from Storage to disk to reclaim space. However, Storage *cannot* evict Execution memory blocks.
+  
+  **Executor Out-of-Memory (OOM) Causes**:
+  * **Heap OOM**: Caused by collecting too much data to the driver, long-lived cached objects, or high partition skew loading data into memory beyond JVM limits.
+  * **Container Off-Heap OOM (YARN Kill)**: PySpark users transfer data between Java and Python processes using sockets, allocating memory outside the JVM heap. If this overhead exceeds `spark.executor.memoryOverhead` limits, YARN terminates the container. We resolve this by increasing the overhead configuration."
+
+---
+
+### Q2: Detail Spark join strategies. Compare Sort-Merge Join (SMJ) and Broadcast Hash Join (BHJ) at the physical network level.
+* **How to explain this to the interviewer**:
+  Clearly contrast the network traffic. SMJ shuffles all keys across nodes and sorts them. BHJ replicates the small dataset globally and runs joins locally. Explain the threshold configuration.
+
+* **Model Answer**:
+  "Spark decides physical join execution plans using the Catalyst cost model:
+  
+  1. **Broadcast Hash Join (BHJ)**:
+     If one of the DataFrames is smaller than the threshold defined in `spark.sql.autoBroadcastJoinThreshold` (default 10MB), Spark selects BHJ. The driver downloads the small table, serializes it, and sends it to every executor. Executors build an in-memory hash table of the small dataset and map it against the local partitions of the large dataset.
+     * *Network*: No shuffle of the large table. High performance, zero network sort time.
+     
+  2. **Shuffle Sort-Merge Join (SMJ)**:
+     If both tables are large, Spark uses SMJ.
+     * *Phase 1 (Shuffle)*: Both datasets are hashed by the join keys and shuffled over the network to align matching keys into the same target partition.
+     * *Phase 2 (Sort)*: Within each partition, records are sorted by the join key.
+     * *Phase 3 (Merge)*: The executor iterates through both sorted partitions concurrently, matching records.
+     * *Network*: Heavy network shuffle. Highly scalable because it doesn't require loading entire tables into RAM."
+
+---
+
+### Q3: What is the difference between `repartition()` and `coalesce()` in Spark? When would you use each?
+* **How to explain this to the interviewer**:
+  Start with the fundamental difference: repartition forces a shuffle, while coalesce does not. Explain the direction of partition changes (coalesce only decreases, repartition can increase or decrease).
+
+* **Model Answer**:
+  "The key difference is the network shuffle:
+  
+  * **`repartition()`**:
+    * Dynamically increases or decreases the number of partitions.
+    * It performs a full **network shuffle** to distribute data evenly across new partitions using hash partitioning.
+    * *Use Case*: When data is skewed across partitions, or before performing join operations to ensure even workloads across executors.
+    
+  * **`coalesce()`**:
+    * Can only **decrease** the number of partitions.
+    * It avoids a network shuffle by merging adjacent partitions on the same node.
+    * *Use Case*: Right before writing data to HDFS or S3 sinks. If you have 200 partitions but want to save output as 5 files to prevent small-files problems, calling `.coalesce(5).write` is far more efficient than repartitioning because it saves network IO cycles."

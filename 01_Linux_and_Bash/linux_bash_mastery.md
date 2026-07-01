@@ -1,6 +1,6 @@
 # 🐧 Module 01: Linux & Bash Mastery for Big Data
 
-To successfully manage a distributed cluster containing hundreds of nodes, you must master the Linux operating system, resource limits, network troubleshooting, and shell automation. Distributed frameworks (Hadoop, Spark, Kafka) spawn thousands of concurrent threads and open thousands of files, making OS-level configuration critical.
+To successfully manage a distributed cluster containing hundreds of nodes, you must master the Linux operating system, resource limits, network troubleshooting, text parsing, and shell automation. Distributed frameworks (Hadoop, Spark, Kafka) spawn thousands of concurrent threads and open thousands of files, making OS-level configuration critical.
 
 ---
 
@@ -38,43 +38,100 @@ ulimit -n
 # Check maximum user processes limit
 ulimit -u
 
-# Check all limits
+# Check all limits (including stack size, memory locks, core dump size)
 ulimit -a
 ```
 
 ---
 
-## 2. Linux Permissions & User/Group Management
+## 2. Complete Linux Command Reference Library
 
-Multi-tenant clusters require strict permission controls to protect data files in HDFS and local directories.
+This library lists the exact commands and flags essential for managing and troubleshooting nodes in an enterprise Big Data environment.
 
-### Common CLI commands:
-```bash
-# Create group for data engineers
-sudo groupadd dataengineers
+### A. Navigation & Advanced File Operations
+* **`ls`**: Lists directory contents.
+  * `ls -la`: Show all files (including hidden ones starting with `.`) in list format with size, permissions, and owners.
+  * `ls -lh`: Show file sizes in human-readable formats (e.g., KB, MB, GB).
+  * `ls -lt`: Sort files by modification time (newest first). Great for finding recent log entries.
+  * `ls -lrS`: Sort files by size in reverse order (largest last).
+* **`find`**: Searches for files in a directory hierarchy.
+  * `find . -name "*.log"`: Find files matching wildcard pattern.
+  * `find /var/log -type f -size +100M`: Find files larger than 100 megabytes.
+  * `find /app/hadoop -mtime -2`: Find files modified within the last 2 days.
+  * `find . -type f -perm 777`: Find files with insecure permissions.
+  * `find /var/log/spark -name "*.log" -exec gzip {} \;`: Compress all logs found in Spark log directory.
+* **`xargs`**: Builds and executes command lines from standard input.
+  * `find . -name "*.tmp" | xargs rm -f`: Efficiently delete thousands of temporary files.
+* **`tar`**: Archive utility.
+  * `tar -cvzf logs_backup.tar.gz /var/log/hadoop`: Create a compressed gzip tarball.
+  * `tar -xvzf logs_backup.tar.gz -C /tmp`: Extract tarball to a specific directory.
+* **`rsync`**: Fast, incremental file transfer tool.
+  * `rsync -avz /local/data/ user@remote-node:/remote/data/`: Sync directories over SSH with compression and verbose details.
 
-# Add user 'sparkadmin' to groups 'sparkadmin' and secondary group 'dataengineers'
-sudo usermod -aG dataengineers sparkadmin
+### B. High-Performance Text Processing & Log Parsing
+* **`grep`**: Pattern matching utility.
+  * `grep "OutOfMemory" /var/log/spark/*.log`: Search for errors in log files.
+  * `grep -i "error" hive-cli.log`: Case-insensitive search.
+  * `grep -rn "Failed" /var/log/hadoop/`: Recursive search showing line numbers.
+  * `grep -c "Exception" app.log`: Count occurrences of a word.
+  * `grep -A 5 -B 2 "NullPointerException" app.log`: Print 5 lines after (After) and 2 lines before (Before) the match.
+* **`awk`**: Pattern scanning and processing language.
+  * `awk '{print $1}' access.log`: Print the first column (e.g., IP addresses) of a space-delimited log.
+  * `awk -F',' '{if($3 > 50000) print $1, $3}' emp.csv`: Read CSV files (comma delimiter) and filter records based on value comparisons.
+  * `awk '/ERROR/ {count++} END {print count}' spark.log`: Scan log for matching string and output cumulative count.
+* **`sed`**: Stream editor for filtering and transforming text.
+  * `sed -i 's/localhost/namenode-host/g' core-site.xml`: Inline search-and-replace string in configurations.
+  * `sed -n '10,20p' app.log`: Print lines 10 to 20 of a file.
+* **`sort` & `uniq`**:
+  * `sort -k3 -n -r data.txt`: Sort data by third column numerically in reverse order.
+  * `uniq -c`: Count consecutive duplicate lines.
+  * *Combination*: `awk '{print $1}' access.log | sort | uniq -c | sort -nr | head -n 10` (Finds the top 10 IP addresses hitting your server).
+* **`cut`**: Remove sections from each line of files.
+  * `cut -d',' -f1,3 data.csv`: Extract fields 1 and 3 separated by commas.
 
-# Change ownership of Spark log directory (Owner: sparkadmin, Group: dataengineers)
-sudo chown -R sparkadmin:dataengineers /var/log/spark
+### C. System Performance & Disk Monitoring
+* **`df`**: Reports file system disk space usage.
+  * `df -h`: Human-readable format.
+  * `df -i`: Show inode usage. If inodes are 100% full, you cannot create new files even if you have terabytes of free space.
+* **`du`**: Estimates file space usage.
+  * `du -sh /var/log/*`: Display total size of directories.
+  * `du -ah /var/log | sort -rh | head -n 10`: Find the top 10 largest files in log directory.
+* **`free`**: Displays amount of free and used memory in the system.
+  * `free -h`: Human-readable statistics.
+  * `free -m`: Displays stats in megabytes. Focus on the `available` column rather than `free`, as Linux uses unused RAM for file caching.
+* **`top` / `htop`**: Real-time display of process resource usage.
+  * Press `M` in `top` to sort processes by memory usage.
+  * Press `P` in `top` to sort by CPU usage.
+* **`iostat`**: Report Central Processing Unit (CPU) statistics and input/output statistics for devices.
+  * `iostat -xz 1 5`: Show extended disk I/O metrics every second, 5 times. High `%util` indicates disk bottleneck.
+* **`vmstat`**: Reports virtual memory statistics.
+  * `vmstat 1 5`: Inspect page swapping (`si`/`so` columns). If swapping is high, the node is out of physical memory.
 
-# Set permissions: Owner (Read/Write/Execute), Group (Read/Execute), Others (None)
-chmod 750 /var/log/spark
+### D. Network Analysis & Port Diagnostics
+* **`netstat` / `ss`**: Print network connections, routing tables, and interface statistics.
+  * `ss -tulnp`: Display all listening TCP/UDP ports with process names and PIDs.
+* **`lsof`**: List open files.
+  * `lsof -i :8088`: Find the process ID listening on port 8088 (YARN ResourceManager UI).
+* **`nc` (netcat)**: Arbitrary data transmission utility.
+  * `nc -zv 192.168.1.100 9000`: Scan if port 9000 (HDFS NameNode RPC) is open and reachable.
+* **`ping` & `traceroute`**:
+  * `ping -c 5 remote-host`: Test basic network connection.
+  * `traceroute remote-host`: Trace network routing path hops.
+* **`curl` & `wget`**:
+  * `curl -I http://localhost:50070`: Test connection and retrieve HTTP headers from NameNode UI.
+  * `wget http://repo.maven.org/spark-core.jar`: Download binaries directly on cluster nodes.
 
-# Set SetUID/SetGID/Sticky Bit
-# Sticky Bit (t) ensures only the owner can delete files inside a shared directory (e.g., /tmp)
-chmod +t /tmp/shared_data
-```
-
-### Permission Representation Matrix:
-| Octal | Binary | File Permissions | Description |
-| :--- | :--- | :--- | :--- |
-| `7` | `111` | `rwx` | Read, Write, and Execute |
-| `6` | `110` | `rw-` | Read and Write |
-| `5` | `101` | `r-x` | Read and Execute |
-| `4` | `100` | `r--` | Read Only |
-| `0` | `000` | `---` | No Permissions |
+### E. User, Group & Permission Management
+* **`chmod`**: Change file mode bits.
+  * `chmod 755 script.sh`: Read/Write/Execute for owner, Read/Execute for group and others.
+  * `chmod +t /tmp/shared`: Apply sticky bit.
+* **`chown`**: Change file owner and group.
+  * `chown -R hdfs:hadoop /hadoop/data`: Change owner and group recursively.
+* **`useradd` / `usermod` / `userdel`**:
+  * `sudo useradd -m -g hadoop spark`: Create user 'spark' belonging to primary group 'hadoop'.
+  * `sudo usermod -aG wheels user`: Append user to secondary group 'wheels'.
+* **`visudo`**: Safely edit the sudoers file.
+  * Add `spark ALL=(ALL) NOPASSWD: ALL` to allow running commands as root without passwords.
 
 ---
 
@@ -115,63 +172,7 @@ Daemons like Hadoop start scripts (`start-dfs.sh`) that SSH into every worker no
 
 ---
 
-## 4. Process Management & Signal Handling
-
-Ecosystem services run as background JVM processes. You must know how to trace them, inspect resource consumption, and shut them down cleanly.
-
-### Inspecting Processes:
-```bash
-# Find JVM process IDs running on the machine
-jps -lm
-
-# List all running processes with user, PID, CPU, Memory, and Command details
-ps aux | grep java
-
-# Monitor live CPU/Memory consumption per process
-top -b -n 1 | head -n 20
-# Better interactive UI
-htop
-```
-
-### Signal Handling (`kill`):
-When shutting down services, always use soft signals before resorting to force.
-* **`kill -15 <PID>` (SIGTERM)**: Request clean shutdown. The JVM catches this signal, runs its registered shutdown hooks, flushes metadata to disk, closes open files, and exits cleanly.
-* **`kill -9 <PID>` (SIGKILL)**: Force kill. The kernel terminates the process immediately. The JVM cannot run shutdown hooks, which can corrupt local transaction logs or database files.
-* **`kill -3 <PID>` (SIGQUIT)**: Triggers the JVM to dump a full thread stack trace to standard output. Extremely useful for debugging deadlocks and hung applications.
-
----
-
-## 5. Network Analysis & Port Troubleshooting
-
-Distributed daemons listen on specific TCP ports. A primary task in clustering is opening firewall ports and verifying inter-node communication.
-
-### Verifying Listening Ports:
-```bash
-# Show listening TCP ports with PIDs and process names
-sudo netstat -tulnp
-
-# Modern alternative using socket statistics (ss)
-ss -tulnp
-
-# Find which process is occupying port 8088 (YARN ResourceManager UI)
-lsof -i :8088
-```
-
-### Checking Inter-Node Connections:
-```bash
-# Verify network path and measure round-trip latency
-ping -c 5 192.168.1.101
-
-# Test if port 9000 (HDFS NameNode RPC) is reachable on master node
-nc -zv master-node 9000
-
-# Inspect routing path to worker node
-traceroute worker1
-```
-
----
-
-## 6. Advanced Bash Scripting for Cluster Automation
+## 4. Advanced Bash Scripting for Cluster Automation
 
 Writing clean shell scripts is essential for scheduling tasks, validating environments, and cleaning logs.
 
@@ -245,38 +246,45 @@ main
 
 ---
 
-## 7. System Monitoring & Kernel Diagnostics
+## 5. Enterprise Job Interview Q&A (Linux & Bash)
 
-When nodes behave erratically (e.g., losing connection or suddenly slowing down), check system statistics and kernel buffers.
+This section prepares you for production-level interview questions.
 
-```bash
-# View kernel ring buffer messages. Look for OOM (Out of Memory) kills.
-dmesg -T | grep -i -E "oom|kill"
+### Q1: How do you identify a process that is causing a memory leak on a cluster node, and how do you terminate it safely?
+* **How to explain this to the interviewer**:
+  Start by stating the tool you would use to identify the process (`top` or `htop`), explain how to sort the output to pinpoint the culprit, and detail the step-by-step transition from safe termination signals to forced signals. Do not just say "I would run `kill -9`."
 
-# Check system memory usage in human-readable megabytes/gigabytes
-free -h
-
-# Check swap file usage and activity
-swappiness=$(cat /proc/sys/vm/swappiness)
-echo "Swappiness value is: $swappiness" # High values (e.g. 60) force swapping. Keep to 10 or 0 for cluster nodes to prevent swapping executor RAM to disk.
-
-# Monitor I/O performance on disks (requires sysstat package)
-# Displays disk read/write rates and await (wait time for I/O request in ms)
-iostat -xz 1 5
-
-# Monitor system stats (processes, memory, paging, CPU activity)
-vmstat 1 5
-```
+* **Model Answer**:
+  "To identify the memory-leaking process, I would log into the host node and run `top` or `htop`. In `top`, I would press `Shift + M` to sort all running processes by physical memory usage (`%MEM`). 
+  
+  Once the process ID (PID) is identified, I check its type. If it is a JVM application (like Hadoop or Spark), I run `jps -lv` to retrieve the JVM arguments and identify the class name.
+  
+  To terminate it:
+  1. I start with a graceful termination request using **`kill -15 <PID>` (SIGTERM)**. This allows the application to trigger its JVM shutdown hooks, flush transient memory buffers to disk, release file handles, and close socket connections.
+  2. If the process does not shut down within a reasonable timeout, it indicates the process is hung in an IO state or deadlock. I will then execute **`kill -9 <PID>` (SIGKILL)** to force the operating system kernel to clean up the process resources immediately."
 
 ---
 
-## 🎯 Exam and Interview Traps
+### Q2: What is the difference between hard limits and soft limits in `ulimit`, and how does it impact a running Spark cluster?
+* **How to explain this to the interviewer**:
+  Explain that `ulimit` controls resource thresholds for processes started by users. Define soft limits as warnings/changeable boundaries, and hard limits as absolute maximum bounds set by the administrator. Link this directly to a common Spark runtime failure.
 
-1. **Trap: Why did my Spark application crash with an OOM error, but the logs show `java.lang.OutOfMemoryError: unable to create new native thread`?**
-   * **Answer**: This is rarely a JVM heap issue. It usually means the Linux user running Spark exceeded the `nproc` limit defined in `/etc/security/limits.conf`. The OS prevented the JVM from spawning a new native thread. Set `nproc` to a higher value like `32768`.
+* **Model Answer**:
+  "The **soft limit** is the current value enforced by the operating system for a resource (like open files or processes). Users can increase their soft limits up to the threshold of the **hard limit** without admin permissions. The **hard limit** is the absolute ceiling set by the system administrator (root) in `/etc/security/limits.conf`.
+  
+  In a Spark cluster, executors spawn hundreds of concurrent worker threads and stream blocks. If the `nproc` limit is set to a low default (e.g., `1024`), the executor JVM will fail when trying to spawn a thread pool thread, throwing `java.lang.OutOfMemoryError: unable to create new native thread`. 
+  
+  Similarly, if `nofile` is too low, when Spark opens connections to copy partition blocks during shuffles, it fails with `java.io.FileNotFoundException (Too many open files)`. In production, both values must be permanently increased to at least `32768` (processes) and `65536` (file descriptors)."
 
-2. **Trap: Why is it bad to use `kill -9` to stop a NameNode or Kafka Broker?**
-   * **Answer**: `kill -9` stops the process instantly, meaning the service cannot flush transaction journals or state changes to disk. For NameNode, it might corrupt the `edit logs`. For Kafka, it leaves the partition state out-of-sync, forcing a long recovery scan of index files during startup. Always use `kill -15` (SIGTERM).
+---
 
-3. **Trap: Why does network performance degrade on worker nodes even when CPU usage is low?**
-   * **Answer**: The OS may be swapping memory pages to disk because the system RAM is full. Check this with `free -h` and `vmstat`. Ensure `vm.swappiness` is set to `10` or less in `/etc/sysctl.conf`.
+### Q3: How do you troubleshoot a connection timeout error between a Spark Driver on node A and its Executors on node B?
+* **How to explain this to the interviewer**:
+  Establish a systematic troubleshooting hierarchy: Physical Link/DNS -> Port Binding -> Firewall Rules -> Application Configuration.
+
+* **Model Answer**:
+  "I troubleshoot network connectivity timeouts step-by-step:
+  1. **Ping Test**: Run `ping -c 5 node-b` from Node A to ensure the physical link is active and DNS hostnames resolve to the correct IP addresses.
+  2. **Port Binding Check**: On Node B, I run `ss -tulnp | grep <port>` or `lsof -i :<port>` to verify the Executor daemon is actually running and listening on the expected port (not bound only to the local loopback `127.0.0.1`).
+  3. **Port Reachability**: From Node A, I use netcat (`nc -zv Node-B <port>`) to check if the port is reachable. If the ping succeeds but netcat hangs or returns connection refused, it indicates a firewall block.
+  4. **Firewall Verification**: I check local firewall rules on both hosts using `sudo ufw status` (Ubuntu) or `sudo firewall-cmd --list-all` (CentOS/RedHat) and ensure security groups permit communication on the Spark port ranges."
